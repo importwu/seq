@@ -21,12 +21,10 @@ fn numeric_literal<I>(input: I) -> ParseResult<I, I>
 {
     let src = input.clone();
 
-    let mut fraction = '.'.and(skip_many(digit));
-    let mut fraction1 = '.'.and(skip_many1(digit));
-    let mut exponent = 'E'.or('e')
-        .and(opt('+'.or('-')))
-        .and(skip_many1(digit));
-    let mut hexdigit = "0x".or("0X").and(skip_many1(hex));
+    let fraction = '.'.and(skip_many(digit));
+    let fraction1 = '.'.and(skip_many1(digit));
+    let exponent = 'E'.or('e').and(opt('+'.or('-'))).and(skip_many1(digit));
+    let hexdigit = "0x".or("0X").and(skip_many1(hex));
 
     let (_, i) = hexdigit
         .or(
