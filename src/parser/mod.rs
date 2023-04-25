@@ -24,11 +24,11 @@ fn numeric_literal<I>(input: I) -> ParseResult<I, I>
     let fraction = '.'.and(skip_many(digit));
     let fraction1 = '.'.and(skip_many1(digit));
     let exponent = 'E'.or('e').and(opt('+'.or('-'))).and(skip_many1(digit));
-    let hexdigit = "0x".or("0X").and(skip_many1(hex));
+    let hexdigit = '0'.and('x'.or('X')).and(skip_many1(hex));
 
     let (_, i) = hexdigit
         .or(
-    skip_many1(digit)
+            skip_many1(digit)
                 .and(opt(fraction))
                 .or(fraction1)
                 .and(opt(exponent))
