@@ -88,14 +88,18 @@ where I: Input<Token = char>
         input = i;
 
         loop {
-            let ((op, l_bp, r_bp), i) = peek(binop).parse(input)?;
+            // let ((op, l_bp, r_bp), i) = peek(binop).parse(input)?;
+            let ((op, l_bp, r_bp), _) = match binop.parse(input.clone()) {
+                Ok(o) => o,
+                Err(Error::Eoi) => break,
+                Err(e) => return Err(e)
+            };
 
             if l_bp < min_bp {
-                input = i;
                 break;
             }
 
-            let (_, i) = binop.parse(i).unwrap();
+            let (_, i) = binop.parse(input).unwrap();
 
             let (right, i) = expr_binop(r_bp).parse(i)?;
 
