@@ -7,11 +7,13 @@ use rtor::{
     combine::{
         opt,
         skip_many1,
-        skip_many
+        skip_many,
+        sep_by1
     },
     primitive::{
         digit,
-        hex
+        hex,
+        token
     }
 };
 
@@ -23,30 +25,31 @@ pub enum LiteralValue {
 }
 
 #[derive(Debug)]
-pub enum BinOperator {
+pub enum BinaryOperator {
     Plus,
     Mul,
 }
 
 #[derive(Debug)]
-pub enum Expr {
-    LiteralValue(LiteralValue),
-    BinOp {
-        left: Box<Expr>,
-        op: BinOperator,
-        right: Box<Expr>
-    }
+pub enum UnaryOperator {
+    Plus,
+    Minus
 }
 
-fn peek<I, P>(mut parser: P) -> impl Parser<I, Output = P::Output, Error = P::Error> 
-where 
-    I: Input,
-    P: Parser<I>
-{
-    move |input: I| {
-        let (o, _) = parser.parse(input.clone())?;
-        Ok((o, input))
-    }
+#[derive(Debug)]
+pub enum Expr {
+    LiteralValue(LiteralValue),
+    BinaryOp {
+        left: Box<Expr>,
+        op: BinaryOperator,
+        right: Box<Expr>
+    },
+    UnaryOp {
+        op: UnaryOperator,
+        expr: Box<Expr>
+    },
+    Tuple(Vec<Expr>),
+    IsNull(Box<Expr>)
 }
 
 fn unsigned_numeric_literal<I>(input: I) -> ParseResult<LiteralValue, I> 
@@ -69,48 +72,78 @@ where I: Input<Token = char>
     Ok((LiteralValue::Number(s), i))
 }
 
-fn binop<I>(input: I) -> ParseResult<(BinOperator, u8, u8), I> 
+fn binary_op<I>(input: I) -> ParseResult<(BinaryOperator, u8, u8), I> 
 where I: Input<Token = char>
 {
-    '+'.map(|_| (BinOperator::Plus, 1, 2))
-        .or('*'.map(|_| (BinOperator::Mul, 3, 4)))
+    '+'.map(|_| (BinaryOperator::Plus, 3, 4))
+        .or('*'.map(|_| (BinaryOperator::Mul, 5, 6)))
         .parse(input)
 }
 
-fn expr_binop<I>(min_bp: u8) -> impl Parser<I, Output = Expr, Error = Error<I::Token>>
+fn unary_op<I>(input: I) -> ParseResult<(UnaryOperator, u8), I> 
 where I: Input<Token = char>
 {
-    move |mut input: I| {
-        let (value, i) = unsigned_numeric_literal.parse(input)?;
+    '+'.map(|_| (UnaryOperator::Plus, 7))
+        .or('-'.map(|_| (UnaryOperator::Minus, 7)))
+        .parse(input)
+}
 
-        let mut left = Expr::LiteralValue(value);
+fn expr<I>(min_bp: u8) -> impl Parser<I, Output = Expr, Error = Error<I::Token>>
+where I: Input<Token = char>
+{
+    move |input: I| {
 
-        input = i;
+        let (mut left, mut input) = loop {
 
-        loop {
-            // let ((op, l_bp, r_bp), i) = peek(binop).parse(input)?;
-            let ((op, l_bp, r_bp), _) = match binop.parse(input.clone()) {
-                Ok(o) => o,
-                Err(Error::Eoi) => break,
-                Err(e) => return Err(e)
-            };
-
-            if l_bp < min_bp {
-                break;
+            if let Ok((value, i)) = token(unsigned_numeric_literal).parse(input.clone()) {
+                break (Expr::LiteralValue(value), i)
             }
 
-            let (_, i) = binop.parse(input).unwrap();
+            if let Ok(((op, bp), i)) = token(unary_op).parse(input.clone()) {
+                let (expr, i) = expr(bp).parse(i)?;
+                break (Expr::UnaryOp { op, expr: Box::new(expr) }, i)
+            }
 
-            let (right, i) = expr_binop(r_bp).parse(i)?;
+            if let Ok((_, i)) = token('(').parse(input.clone()) {
+                let (expr, i) = sep_by1(expr(0), token(',')).parse(i)?;
+                let (_, i) = token(')').parse(i)?;
+                break (Expr::Tuple(expr), i)
+            }
+                
+            return Err(Error::Unexpected('?'))
+        };
 
+        loop {
 
-            left = Expr::BinOp { 
-                left: Box::new(left), 
-                op, 
-                right: Box::new(right)
-            };
+            if let Ok(((op, l_bp, r_bp), i)) = token(binary_op).parse(input.clone()) {
+                if l_bp < min_bp {
+                    break;
+                }
 
-            input = i;
+                let (right, i) = expr(r_bp).parse(i)?;
+
+                left = Expr::BinaryOp { 
+                    left: Box::new(left), 
+                    op, 
+                    right: Box::new(right)
+                };
+
+                input = i;
+
+                continue;
+            }
+
+            if let Ok(((_, l_bp), i)) = token("ISNULL").map(|o| (o, 1u8)).parse(input.clone()) {
+                if l_bp < min_bp {
+                    break;
+                }
+
+                left = Expr::IsNull(Box::new(left));
+                input = i;
+                continue;
+            }
+
+            break;
         }
 
         Ok((left, input))
@@ -120,6 +153,6 @@ where I: Input<Token = char>
 
 #[test]
 fn test() {
-    let r =expr_binop(0).parse("1+2*3*4");
-    println!("{:?}", r)
+    let r =expr(0).parse("( 1 + 2 , 3 + 4 ) * 5");
+    println!("{:#?}", r)
 }
