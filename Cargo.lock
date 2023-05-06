@@ -5,7 +5,7 @@ version = 3
 [[package]]
 name = "rtor"
 version = "0.1.0"
-source = "git+https://github.com/importwu/rtor.git#2ffbb0f168d6585463f8b59acb774f1047947ad6"
+source = "git+https://github.com/importwu/rtor.git#ec3120b3e53f178f21879814f8b00472b5131474"
 
 [[package]]
 name = "seq"
