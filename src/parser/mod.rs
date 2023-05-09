@@ -1,7 +1,6 @@
 use rtor::{
     Parser,
     Input,
-    AsChar,
     Error,
     ParseResult,
     combine::{
@@ -11,7 +10,7 @@ use rtor::{
         sep_by1,
         option, 
         between,
-        recognize
+        recognize, many1
     },
     primitive::{
         digit,
@@ -21,24 +20,31 @@ use rtor::{
     }
 };
 
-mod keyword;
+
 
 #[derive(Debug)]
 pub enum LiteralValue {
     Number(String)
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub enum BinaryOperator {
     Plus,
     Mul,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub enum UnaryOperator {
     Plus,
     Minus
 }
+
+#[derive(Debug)]
+pub struct WhenCause {
+    expr: Expr,
+    result: Expr
+}
+
 
 #[derive(Debug)]
 pub enum Expr {
@@ -65,22 +71,30 @@ pub enum Expr {
     IsNotDistinctFrom(Box<Expr>, Box<Expr>),
     Case {
         operand: Option<Box<Expr>>,
-        when_then: Vec<(Expr, Expr)>,
+        when_cause: Vec<WhenCause>,
         else_cause: Option<Box<Expr>>,
     }
 }
 
+// textLiteral:
+//     (UNDERSCORE_CHARSET? textStringLiteral | NCHAR_TEXT) textStringLiteral*
+
+// UNDERSCORE_CHARSET: UNDERLINE_SYMBOL [a-z0-9]+ 
+
+//UNDERLINE_SYMBOL : '_'
+
+//
 fn unsigned_numeric_literal<I>(input: I) -> ParseResult<LiteralValue, I> 
 where I: Input<Token = char>
 {
-    let fraction = '.'.and(skip_many(digit));
-    let fraction1 = '.'.and(skip_many1(digit));
-    let exponent = 'E'.or('e').and(opt('+'.or('-'))).and(skip_many1(digit));
+    let fraction = '.'.andr(skip_many(digit));
+    let fraction1 = '.'.andr(skip_many1(digit));
+    let exponent = 'E'.or('e').andr(opt('+'.or('-'))).andr(skip_many1(digit));
 
     let unsigned_numeric = skip_many1(digit)
-        .and(opt(fraction))
+        .andr(opt(fraction))
         .or(fraction1)
-        .and(opt(exponent));
+        .andr(opt(exponent));
 
     let (o, i) = recognize(unsigned_numeric).parse(input)?;
     let s = o.tokens().collect::<String>();
@@ -124,33 +138,47 @@ where I: Input<Token = char>
     .parse(input)
 }
 
+fn expr_unary<I>(input: I) -> ParseResult<Expr, I>
+where I: Input<Token = char>
+{
+    token(unary_op)
+        .and_then(|(op, l)| 
+            expr(l).map(move |e| Expr::UnaryOp { op, expr: Box::new(e) })
+        )
+        .parse(input)
+}
+
+fn expr_literal<I>(input: I) -> ParseResult<Expr, I>
+where I: Input<Token = char>
+{
+    token(unsigned_numeric_literal)
+        .map(|v| Expr::LiteralValue(v))
+        .parse(input)
+}
+
+fn expr_case<I>(input: I) -> ParseResult<Expr, I>
+where I: Input<Token = char>
+{
+    let (operand, i) = token("CASE").andr(option(expr(0).map(Box::new))).parse(input)?;
+    let (when_cause, i) = many1(token("WHEN").andr(expr(0))
+        .and(token("THEN").andr(expr(0))).map(|(expr, result)| WhenCause {expr, result}))
+        .parse(i)?;
+    let (else_cause, i) = option(token("ELSE").andr(expr(0).map(Box::new))).andl(token("END")).parse(i)?;
+    Ok((Expr::Case { operand, when_cause, else_cause}, i))
+}
+
+
+//pratt parser
 fn expr<I>(min: u8) -> impl Parser<I, Output = Expr, Error = Error<I::Token>>
 where I: Input<Token = char>
 {
     move |input: I| {
 
-        let (mut lhs, mut input) = loop {
-
-            if let Ok((value, i)) = token(unsigned_numeric_literal).parse(input.clone()) {
-                break (Expr::LiteralValue(value), i)
-            }
-
-            if let Ok(((op, l), i)) = token(unary_op).parse(input.clone()) {
-                let (expr, i) = expr(l).parse(i)?;
-                break (Expr::UnaryOp { op, expr: Box::new(expr) }, i)
-            }
-
-            if let Ok(o) = expr_tuple.parse(input.clone()) {
-                break o;
-            }
-
-            if let Ok((_, i)) = token("CASE").parse(input.clone()) {
-                let (operand, i) = option(expr(0)).parse(i)?;
-                let
-            }
-
-            return unsafe {Err(error.parse(input).unwrap_err_unchecked())}
-        };
+        let (mut lhs, mut input) = expr_literal
+            .or(expr_unary)
+            .or(expr_tuple)
+            .or(expr_case)
+            .parse(input)?;
 
         loop {
             if let Ok(((op, l, r), i)) = token(binary_op).parse(input.clone()) {
@@ -201,10 +229,10 @@ where I: Input<Token = char>
 }
 
 
+
 #[test]
 fn test() {
-    let r =expr(0).parse(" ( 1e2+2.2e2, 3* 5 )");
+    
+    let r = expr(0).parse("CASE 1 WHEN CASE 2 WHEN 4 THEN 5 END THEN 3 END");
     println!("{:#?}", r);
-
-
 }
