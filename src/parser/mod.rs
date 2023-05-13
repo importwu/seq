@@ -22,9 +22,11 @@ use rtor::{
 
 
 
+
 #[derive(Debug)]
-pub enum LiteralValue {
-    Number(String)
+pub enum Literal {
+    Integer(i64),
+    Float(f64)
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -48,7 +50,7 @@ pub struct WhenCause {
 
 #[derive(Debug)]
 pub enum Expr {
-    LiteralValue(LiteralValue),
+    Literal(Literal),
     BinaryOp {
         left: Box<Expr>,
         op: BinaryOperator,
@@ -76,15 +78,7 @@ pub enum Expr {
     }
 }
 
-// textLiteral:
-//     (UNDERSCORE_CHARSET? textStringLiteral | NCHAR_TEXT) textStringLiteral*
-
-// UNDERSCORE_CHARSET: UNDERLINE_SYMBOL [a-z0-9]+ 
-
-//UNDERLINE_SYMBOL : '_'
-
-//
-fn unsigned_numeric_literal<I>(input: I) -> ParseResult<LiteralValue, I> 
+fn unsigned_numeric_literal<I>(input: I) -> ParseResult<Literal, I> 
 where I: Input<Token = char>
 {
     let fraction = '.'.andr(skip_many(digit));
@@ -99,7 +93,13 @@ where I: Input<Token = char>
     let (o, i) = recognize(unsigned_numeric).parse(input)?;
     let s = o.tokens().collect::<String>();
 
-    Ok((LiteralValue::Number(s), i))
+    let numeric = unsafe {
+        s.parse::<i64>().map(Literal::Integer)
+        .or(s.parse::<f64>().map(Literal::Float))
+        .unwrap_unchecked()
+    };
+
+    Ok((numeric, i))
 }
 
 fn binary_op<I>(input: I) -> ParseResult<(BinaryOperator, u8, u8), I> 
@@ -152,7 +152,7 @@ fn expr_literal<I>(input: I) -> ParseResult<Expr, I>
 where I: Input<Token = char>
 {
     token(unsigned_numeric_literal)
-        .map(|v| Expr::LiteralValue(v))
+        .map(Expr::Literal)
         .parse(input)
 }
 
@@ -228,11 +228,61 @@ where I: Input<Token = char>
     }
 }
 
+use std::ops::ControlFlow;
 
+pub trait Visitor {
+    fn visit_literal_expr(&mut self, literal_expr: &LiteralExpr) -> ControlFlow<()>;
+    fn visit_between_expr(&mut self, between_expr: &BetweenExpr) -> ControlFlow<()>;
+}
+
+struct TestVisitor(Vec<i64>);
+
+pub trait AstNode {
+    fn accept(&self, visitor: &mut impl Visitor) -> ControlFlow<()> where Self: Sized;
+}
+
+pub struct LiteralExpr(Literal);
+
+impl AstNode for LiteralExpr {
+    fn accept(&self, visitor: &mut impl Visitor) -> ControlFlow<()> where Self: Sized{
+        visitor.visit_literal_expr(self)
+    }
+}
+
+pub struct BetweenExpr {
+    not: bool,
+    expr: Box<dyn AstNode>,
+    left: Box<dyn AstNode>,
+    right: Box<dyn AstNode>
+}
+
+impl AstNode for BetweenExpr {
+     fn accept(&self, visitor: &mut impl Visitor) -> ControlFlow<()> where Self: Sized {
+        visitor.visit_between_expr(self)
+    }
+}
+
+impl Visitor for TestVisitor {
+    fn visit_literal_expr(&mut self, literal_expr: &LiteralExpr) -> ControlFlow<()> {
+       ControlFlow::Continue(()) 
+    }
+
+    fn visit_between_expr(&mut self, between_expr: &BetweenExpr) -> ControlFlow<()> {
+        between_expr.expr.accept(self)?;
+        // between_expr.left.accept(self)?;
+        // between_expr.right.accept(self)?;
+        ControlFlow::Continue(())
+    }
+}
 
 #[test]
 fn test() {
-    
-    let r = expr(0).parse("CASE 1 WHEN CASE 2 WHEN 4 THEN 5 END THEN 3 END");
-    println!("{:#?}", r);
+    let (expr, i) = expr(0).parse("1 BETWEEN 2 AND 3").unwrap();
+    println!("{:#?}", expr);
+
+    // let mut visitor = TestVisitor(vec![]);
+
+    // visitor.expr_enter(&expr);
+
+    // println!("{:?}", visitor.0)
 }
