@@ -61,21 +61,48 @@ pub enum Expr {
         expr: Box<Expr>
     },
     Between {
-        is_not: bool,
+        not: bool,
         expr: Box<Expr>,
         left: Box<Expr>,
         right: Box<Expr>
     },
     Tuple(Vec<Expr>),
-    IsNull(Box<Expr>),
-    NotNull(Box<Expr>),
-    IsDistinctFrom(Box<Expr>, Box<Expr>),
-    IsNotDistinctFrom(Box<Expr>, Box<Expr>),
+    IsNull {
+        not: bool,
+        expr: Box<Expr>
+    },
+    IsDistinctFrom {
+        not: bool,
+        left: Box<Expr>,
+        right: Box<Expr>,
+    },
     Case {
         operand: Option<Box<Expr>>,
         when_cause: Vec<WhenCause>,
         else_cause: Option<Box<Expr>>,
+    },
+    InList {
+        not: bool,
+        expr: Box<Expr>,
+        list: Vec<Expr>
+    },
+    InSubquery {
+        not: bool,
+        expr: Box<Expr>,
+        subquery: Box<Query>
+    },
+    Exists {
+        not: bool,
+        subquery: Box<Query>
     }
+}
+
+pub struct Query {
+
+}
+
+pub enum Stmt {
+    Select(Box<Query>)
 }
 
 fn unsigned_numeric_literal<I>(input: I) -> ParseResult<Literal, I> 
@@ -202,7 +229,7 @@ where I: Input<Token = char>
                 continue;
             }
 
-            if let Ok((is_not, i)) = opt_not.parse(input.clone()) {
+            if let Ok((not, i)) = opt_not.parse(input.clone()) {
                 if let Ok((l, i)) = token("BETWEEN").map(|_| 1u8).parse(i.clone()) {
                     if l< min { break; }
 
@@ -211,7 +238,7 @@ where I: Input<Token = char>
                     let (r_expr, i) = expr(0).parse(i)?;
 
                     lhs = Expr::Between { 
-                        is_not, 
+                        not, 
                         expr: Box::new(lhs), 
                         left: Box::new(l_expr), 
                         right: Box::new(r_expr)
@@ -231,58 +258,62 @@ where I: Input<Token = char>
 use std::ops::ControlFlow;
 
 pub trait Visitor {
-    fn visit_literal_expr(&mut self, literal_expr: &LiteralExpr) -> ControlFlow<()>;
-    fn visit_between_expr(&mut self, between_expr: &BetweenExpr) -> ControlFlow<()>;
+    fn pre_visit_expr(&mut self, expr: &Expr) -> ControlFlow<()>;
+    fn post_visit_expr(&mut self, expr: &Expr);
 }
 
 struct TestVisitor(Vec<i64>);
 
 pub trait AstNode {
-    fn accept(&self, visitor: &mut impl Visitor) -> ControlFlow<()> where Self: Sized;
+    fn accept<V: Visitor>(&self, visitor: &mut V) -> ControlFlow<()>;
 }
 
-pub struct LiteralExpr(Literal);
-
-impl AstNode for LiteralExpr {
-    fn accept(&self, visitor: &mut impl Visitor) -> ControlFlow<()> where Self: Sized{
-        visitor.visit_literal_expr(self)
-    }
-}
-
-pub struct BetweenExpr {
-    not: bool,
-    expr: Box<dyn AstNode>,
-    left: Box<dyn AstNode>,
-    right: Box<dyn AstNode>
-}
-
-impl AstNode for BetweenExpr {
-     fn accept(&self, visitor: &mut impl Visitor) -> ControlFlow<()> where Self: Sized {
-        visitor.visit_between_expr(self)
+impl AstNode for Expr {
+    fn accept<V: Visitor>(&self, visitor: &mut V) -> ControlFlow<()> {
+        visitor.pre_visit_expr(self)?;
+        match self {
+            Expr::Between { not, expr, left, right } => {
+                expr.accept(visitor)?;
+                left.accept(visitor)?;
+                right.accept(visitor)?;
+            }
+            Expr::Literal(_) => (),
+            _ => panic!("fuck")
+        }
+        visitor.post_visit_expr(self);
+        ControlFlow::Continue(())
     }
 }
 
 impl Visitor for TestVisitor {
-    fn visit_literal_expr(&mut self, literal_expr: &LiteralExpr) -> ControlFlow<()> {
-       ControlFlow::Continue(()) 
+    fn pre_visit_expr(&mut self, expr: &Expr) -> ControlFlow<()> {
+        match expr {
+            a@Expr::Between { not, expr, left, right } => {
+                if *not {
+                    return ControlFlow::Break(())
+                }
+                println!("pre:{:?}", a);
+            }
+            a@Expr::Literal(_) => {
+                println!("pre:{:?}", a);
+            }
+            _ => panic!("fuck")
+        }
+        ControlFlow::Continue(())
     }
 
-    fn visit_between_expr(&mut self, between_expr: &BetweenExpr) -> ControlFlow<()> {
-        between_expr.expr.accept(self)?;
-        // between_expr.left.accept(self)?;
-        // between_expr.right.accept(self)?;
-        ControlFlow::Continue(())
+    fn post_visit_expr(&mut self, expr: &Expr) {
+        println!("post:{:?}", expr)
     }
 }
 
 #[test]
 fn test() {
-    let (expr, i) = expr(0).parse("1 BETWEEN 2 AND 3").unwrap();
+    let (expr, i) = expr(0).parse("1 BETWEEN 2 AND 3 NOT BETWEEN 4 AND 5").unwrap();
     println!("{:#?}", expr);
 
-    // let mut visitor = TestVisitor(vec![]);
+    let mut visitor = TestVisitor(vec![]);
 
-    // visitor.expr_enter(&expr);
+    expr.accept(&mut visitor);
 
-    // println!("{:?}", visitor.0)
 }
