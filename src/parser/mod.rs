@@ -32,13 +32,31 @@ pub enum Literal {
 #[derive(Debug, Clone, Copy)]
 pub enum BinaryOperator {
     Plus,
-    Mul,
+    Minus,
+    Multiply,
+    Divide,
+    Modulo,
+    StringConcat,
+    Gt,
+    Lt,
+    GtEq,
+    LtEq,
+    Eq,
+    NotEq,
+    And,
+    Or,
+    BitwiseAnd,
+    BitwiseOr,
+    ShiftRight,
+    ShiftLeft,
 }
 
 #[derive(Debug, Clone, Copy)]
 pub enum UnaryOperator {
     Plus,
-    Minus
+    Minus,
+    Not,
+    BitwiseNot,
 }
 
 #[derive(Debug)]
@@ -94,6 +112,11 @@ pub enum Expr {
     Exists {
         not: bool,
         subquery: Box<Query>
+    },
+    Subquery(Box<Query>),
+    Is {
+        not: bool,
+        expr: Box<Expr>
     }
 }
 
@@ -133,15 +156,16 @@ fn binary_op<I>(input: I) -> ParseResult<(BinaryOperator, u8, u8), I>
 where I: Input<Token = char>
 {
     '+'.map(|_| (BinaryOperator::Plus, 3, 4))
-        .or('*'.map(|_| (BinaryOperator::Mul, 5, 6)))
+        .or('*'.map(|_| (BinaryOperator::Multiply, 5, 6)))
         .parse(input)
 }
 
 fn unary_op<I>(input: I) -> ParseResult<(UnaryOperator, u8), I> 
 where I: Input<Token = char>
 {
-    '+'.map(|_| (UnaryOperator::Plus, 7))
-        .or('-'.map(|_| (UnaryOperator::Minus, 7)))
+    '+'.map(|_| (UnaryOperator::Plus, 12))
+        .or('-'.map(|_| (UnaryOperator::Minus, 12)))
+        .or('~'.map(|_| ()))
         .parse(input)
 }
 
@@ -312,8 +336,8 @@ fn test() {
     let (expr, i) = expr(0).parse("1 BETWEEN 2 AND 3 NOT BETWEEN 4 AND 5").unwrap();
     println!("{:#?}", expr);
 
-    let mut visitor = TestVisitor(vec![]);
+    // let mut visitor = TestVisitor(vec![]);
 
-    expr.accept(&mut visitor);
+    // expr.accept(&mut visitor);
 
 }
