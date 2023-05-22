@@ -302,7 +302,7 @@ where I: Input<Token = char>
             }
 
             if let Ok((not, i)) = opt_not.parse(input.clone()) {
-                
+
                 if let Ok((_, i)) = token(string_no_case("NULL")).parse(i.clone()) {
                     if 7 < min { break; }
                     lhs = Expr::IsNull {
@@ -312,6 +312,25 @@ where I: Input<Token = char>
                     input = i;
                     continue;
                 }
+
+                if let Ok((_, i)) = token(string_no_case("LIKE")).parse(i.clone()) {
+                    if 8 < min { break; }
+
+                    let (mut pattern, i) = expr(7).parse(i)?;
+
+                    //todo escape
+
+                    lhs = Expr::Like { 
+                        not, 
+                        expr: Box::new(lhs), 
+                        pattern: Box::new(pattern), 
+                        escape: None
+                    };
+
+                    input = i;
+                    continue;
+                }
+
 
                 if let Ok((_, i)) = token(string_no_case("BETWEEN")).parse(i.clone()) {
                     if 8 < min { break; }
@@ -404,7 +423,7 @@ where I: Input<Token = char>
 fn test() {
     // let (expr, i) = expr(0).parse("1 BETWEEN 2 AND 3 BETWEEN 4 AND 5").unwrap();
     // let (expr, i) = expr(0).parse("1 BETWEEN 4 AND 5 BETWEEN 6 AND 7").unwrap();
-    let (expr, i) = expr(0).parse(" 1 not NULL").unwrap();
+    let (expr, i) = expr(0).parse(" 2 like 3 like 4").unwrap();
     println!("{:#?}", expr);
 
     // let mut visitor = TestVisitor(vec![]);
