@@ -1,3 +1,5 @@
+use std::collections::{HashMap, HashSet};
+
 use rtor::{
     Parser,
     Input,
@@ -10,13 +12,20 @@ use rtor::{
         sep_by1,
         option, 
         between,
-        recognize, many1
+        recognize, 
+        many1,
     },
     primitive::{
         digit,
         hex,
         token,
-        error, string_no_case
+        error, 
+        string_no_case, 
+        alpha,
+        anychar,
+        satisfy,
+        take_while,
+        oneof
     }
 };
 
@@ -112,6 +121,14 @@ pub enum Expr {
         subquery: Box<Query>
     },
     Subquery(Box<Query>),
+    Column {
+        table: Option<Ident>,
+        column: Ident
+    },
+    Collate {
+        expr: Box<Expr>,
+        collation: Ident
+    },
     Is {
         not: bool,
         expr: Box<Expr>
@@ -120,13 +137,32 @@ pub enum Expr {
         not: bool,
         expr: Box<Expr>,
         pattern: Box<Expr>,
-        escape: Option<char>,
+        escape: Option<Box<Expr>>,
     },
     Cast {
         expr: Box<Expr>,
         data_type: DataType,
     },
-    Function {}
+    Function(Function)
+}
+
+#[derive(Debug)]
+pub enum Function {
+    Simple {
+        name: Ident,
+        arg: FunctionArg
+    },
+    Aggregate {
+        name: Ident,
+        arg: FunctionArg,
+        distinct: bool,
+        filter: Option<Box<Expr>>
+    }
+}
+
+pub enum FunctionArg {
+    List(Vec<Expr>),
+    Wildcard
 }
 
 #[derive(Debug)]
@@ -139,11 +175,53 @@ pub struct Query {
 
 }
 
+#[derive(Debug)]
+pub struct Ident {
+    pub value: String,
+    pub quote: Option<char>
+}
+
+#[derive(Debug)]
 pub enum Stmt {
     Select(Box<Query>)
 }
 
-fn unsigned_numeric_literal<I>(input: I) -> ParseResult<Literal, I> 
+
+fn ident<I>(input: I) -> ParseResult<Ident, I> 
+where I: Input<Token = char>
+{
+    let (start_quote, i) = option('"'.or('[').or('`')).parse(input)?;
+
+    let end_quote = match start_quote {
+        None => {
+            let ident_part = oneof("_@#")
+                .or(satisfy(|c: &char| c.is_alphabetic()))
+                .andr(skip_many(oneof("_@#$").or(satisfy(|c: &char| c.is_alphabetic())).or(digit)));
+            let (ident_part, i) = recognize(ident_part)
+                .map(|o: I| o.tokens().collect::<String>())
+                .parse(i)?;
+            
+            //check keyword todo!
+
+            let ident = Ident {
+                value: ident_part,
+                quote: None
+            };
+            return Ok((ident, i))            
+        }
+        Some('"') => '"',
+        Some('[') => ']',
+        Some('`') => '`',
+        _ => unreachable!()
+    };
+
+    token(take_while(move|c| *c != end_quote && *c != ' '))
+        .map(|o: I| Ident { value: o.tokens().collect(), quote: start_quote })
+        .andl(token(end_quote))
+        .parse(i)
+}
+
+fn numeric_literal<I>(input: I) -> ParseResult<Literal, I> 
 where I: Input<Token = char>
 {
     let fraction = '.'.andr(skip_many(digit));
@@ -155,16 +233,16 @@ where I: Input<Token = char>
         .or(fraction1)
         .andr(opt(exponent));
 
-    let (o, i) = recognize(unsigned_numeric).parse(input)?;
-    let s = o.tokens().collect::<String>();
-
-    let numeric = unsafe {
-        s.parse::<i64>().map(Literal::Integer)
-        .or(s.parse::<f64>().map(Literal::Float))
-        .unwrap_unchecked()
-    };
-
-    Ok((numeric, i))
+    recognize(unsigned_numeric)
+        .map(|o: I| {
+            let s = o.tokens().collect::<String>();
+            unsafe {
+                s.parse::<i64>().map(Literal::Integer)
+                    .or(s.parse::<f64>().map(Literal::Float))
+                    .unwrap_unchecked()
+            }
+        })
+        .parse(input)
 }
 
 fn binary_op<I>(input: I) -> ParseResult<(BinaryOperator, u8, u8), I> 
@@ -203,7 +281,7 @@ fn opt_not<I>(input: I) -> ParseResult<bool, I>
 where I: Input<Token = char>
 {
     option(token(string_no_case("NOT")))
-        .map(|x| x.map_or_else(||false, |_|true))
+        .map(|x| x.map_or(false, |_| true))
         .parse(input) 
 }
 
@@ -227,12 +305,13 @@ where I: Input<Token = char>
             expr(l).map(move |e| Expr::UnaryOp { op, expr: Box::new(e) })
         )
         .parse(input)
+
 }
 
 fn expr_literal<I>(input: I) -> ParseResult<Expr, I>
 where I: Input<Token = char>
 {
-    token(unsigned_numeric_literal)
+    token(numeric_literal)
         .map(Expr::Literal)
         .parse(input)
 }
@@ -248,6 +327,15 @@ where I: Input<Token = char>
     Ok((Expr::Case { operand, when_cause, else_cause}, i))
 }
 
+fn expr_column<I>(input: I) -> ParseResult<Expr, I> 
+where I: Input<Token = char>
+{
+    option(token(ident).andl(token('.')))
+        .and(token(ident))
+        .map(|(table, column)| Expr::Column { table, column})
+        .parse(input)
+}
+
 static mut between_and: bool = false;
 
 //pratt parser
@@ -260,6 +348,7 @@ where I: Input<Token = char>
             .or(expr_unary)
             .or(expr_tuple)
             .or(expr_case)
+            .or(expr_column)
             .parse(input)?;
 
         loop {
@@ -318,19 +407,23 @@ where I: Input<Token = char>
 
                     let (mut pattern, i) = expr(7).parse(i)?;
 
-                    //todo escape
+                    // let escape = token(string_no_case("ESCAPE"))
+                    //     .andr(token(between('\'', anychar,'\'')));
+
+                    let (escape, i) = option(token(string_no_case("ESCAPE")).andr(expr(0)))
+                        .map(|o| o.map(Box::new))
+                        .parse(i)?;
 
                     lhs = Expr::Like { 
                         not, 
                         expr: Box::new(lhs), 
                         pattern: Box::new(pattern), 
-                        escape: None
+                        escape
                     };
 
                     input = i;
                     continue;
                 }
-
 
                 if let Ok((_, i)) = token(string_no_case("BETWEEN")).parse(i.clone()) {
                     if 8 < min { break; }
@@ -423,7 +516,7 @@ where I: Input<Token = char>
 fn test() {
     // let (expr, i) = expr(0).parse("1 BETWEEN 2 AND 3 BETWEEN 4 AND 5").unwrap();
     // let (expr, i) = expr(0).parse("1 BETWEEN 4 AND 5 BETWEEN 6 AND 7").unwrap();
-    let (expr, i) = expr(0).parse(" 2 like 3 like 4").unwrap();
+    let (expr, i) = expr(0).parse("2 like 3 escape 4").unwrap();
     println!("{:#?}", expr);
 
     // let mut visitor = TestVisitor(vec![]);
