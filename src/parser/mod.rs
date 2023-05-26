@@ -14,6 +14,7 @@ use rtor::{
         between,
         recognize, 
         many1,
+        pair
     },
     primitive::{
         digit,
@@ -33,7 +34,9 @@ use rtor::{
 #[derive(Debug)]
 pub enum Literal {
     Integer(i64),
-    Float(f64)
+    Float(f64),
+    String(String),
+    Boolean(bool)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -131,7 +134,8 @@ pub enum Expr {
     },
     Is {
         not: bool,
-        expr: Box<Expr>
+        left: Box<Expr>,
+        right: Box<Expr>
     },
     Like {
         not: bool,
@@ -160,6 +164,7 @@ pub enum Function {
     }
 }
 
+#[derive(Debug)]
 pub enum FunctionArg {
     List(Vec<Expr>),
     Wildcard
@@ -167,7 +172,10 @@ pub enum FunctionArg {
 
 #[derive(Debug)]
 pub enum DataType {
-
+    Integer,
+    Float,
+    String,
+    Boolean,
 }
 
 #[derive(Debug)]
@@ -336,6 +344,27 @@ where I: Input<Token = char>
         .parse(input)
 }
 
+fn data_type<I>(input: I) -> ParseResult<DataType, I> 
+where I: Input<Token = char>
+{
+    string_no_case("INT")
+        .andr(opt(string_no_case("EGER")))
+        .map(|_| DataType::Integer)
+        .or(string_no_case("FLOAT").map(|_| DataType::Float))
+        .or(string_no_case("BOOL").andr(opt(string_no_case("EAN"))).map(|_| DataType::Boolean))
+        .or(string_no_case("STRING").map(|_| DataType::String))
+        .parse(input)
+}
+
+fn expr_cast<I>(input: I) -> ParseResult<Expr, I> 
+where I: Input<Token = char>
+{
+    token(string_no_case("CAST"))
+        .andr(between(token('('), pair(expr(0), token(string_no_case("AS")), token(data_type)), token(')')))
+        .map(|(expr, data_type)| Expr::Cast { expr: Box::new(expr), data_type })
+        .parse(input)
+}
+
 static mut between_and: bool = false;
 
 //pratt parser
@@ -348,7 +377,8 @@ where I: Input<Token = char>
             .or(expr_unary)
             .or(expr_tuple)
             .or(expr_case)
-            .or(expr_column)
+            .or(expr_cast)
+            // .or(expr_column)
             .parse(input)?;
 
         loop {
@@ -406,9 +436,6 @@ where I: Input<Token = char>
                     if 8 < min { break; }
 
                     let (mut pattern, i) = expr(7).parse(i)?;
-
-                    // let escape = token(string_no_case("ESCAPE"))
-                    //     .andr(token(between('\'', anychar,'\'')));
 
                     let (escape, i) = option(token(string_no_case("ESCAPE")).andr(expr(0)))
                         .map(|o| o.map(Box::new))
@@ -514,9 +541,7 @@ where I: Input<Token = char>
 
 #[test]
 fn test() {
-    // let (expr, i) = expr(0).parse("1 BETWEEN 2 AND 3 BETWEEN 4 AND 5").unwrap();
-    // let (expr, i) = expr(0).parse("1 BETWEEN 4 AND 5 BETWEEN 6 AND 7").unwrap();
-    let (expr, i) = expr(0).parse("2 like 3 escape 4").unwrap();
+    let (expr, i) = expr(0).parse("cast ( 2 as Integer  )").unwrap();
     println!("{:#?}", expr);
 
     // let mut visitor = TestVisitor(vec![]);
