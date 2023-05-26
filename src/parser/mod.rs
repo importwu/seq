@@ -14,7 +14,7 @@ use rtor::{
         between,
         recognize, 
         many1,
-        pair
+        pair, sep_by
     },
     primitive::{
         digit,
@@ -194,6 +194,12 @@ pub enum Stmt {
     Select(Box<Query>)
 }
 
+fn stmt_select<I>(input: I) -> ParseResult<Query, I> 
+where I: Input<Token = char>
+{
+    Ok((Query{}, input))
+}
+
 
 fn ident<I>(input: I) -> ParseResult<Ident, I> 
 where I: Input<Token = char>
@@ -279,8 +285,8 @@ fn unary_op<I>(input: I) -> ParseResult<(UnaryOperator, u8), I>
 where I: Input<Token = char>
 {
      string_no_case("NOT").map(|_| (UnaryOperator::Not, 5))
-        .or('+'.map(|_| (UnaryOperator::Plus, 21)))
-        .or('-'.map(|_| (UnaryOperator::Minus, 22)))
+        .or('+'.map(|_| (UnaryOperator::Plus, 23)))
+        .or('-'.map(|_| (UnaryOperator::Minus, 23)))
         .or('~'.map(|_| (UnaryOperator::BitwiseNot, 23)))
         .parse(input)
 }
@@ -365,6 +371,68 @@ where I: Input<Token = char>
         .parse(input)
 }
 
+fn expr_function<I>(input: I) -> ParseResult<Expr, I> 
+where I: Input<Token = char>
+{
+    let (name, i) = token(ident).parse(input)?;
+
+    let (_, i) = token('(').parse(i)?;
+
+    let (distinct, i) = option(token(string_no_case("DISTINCT"))).parse(i)?;
+    
+    let filter = |input: I| {
+        token(string_no_case("FILTER"))
+            .andr(between(
+                token('('),
+                token(string_no_case("WHERE")).andr(expr(0)),
+                token(')')
+            ))
+            .parse(input)
+    };
+
+    match distinct {
+        Some(_) => {
+            let (arg, i) = sep_by1(expr(0), token(','))
+                .map(FunctionArg::List)
+                .parse(i)?;
+            let (_, i) = token(')').parse(i)?;
+
+            let (filter, i) = option(filter).map(|o| o.map(Box::new)).parse(i)?;
+
+            let function_expr = Expr::Function(
+                Function::Aggregate { name, arg, distinct: true, filter }
+            );
+            Ok((function_expr, i))
+        }
+        None => {
+            let (arg, i) = token('*').map(|_|FunctionArg::Wildcard)
+                .or(sep_by(expr(0), token(',')).map(FunctionArg::List))
+                .parse(i)?;
+            let (_, i) = token(')').parse(i)?;
+            let (filter, i) = option(filter).map(|o| o.map(Box::new)).parse(i)?;
+            let function_expr = match filter {
+                Some(_) => Function::Aggregate { name, arg, distinct: false, filter },
+                None => Function::Simple { name, arg }
+            };
+            Ok((Expr::Function(function_expr), i))
+        }
+    }
+}
+
+fn expr_exists<I>(input: I) -> ParseResult<Expr, I> 
+where I: Input<Token = char>
+{
+     let (not, i) = opt_not.parse(input)?;
+     token(string_no_case("EXISTS"))
+        .andr(between(
+            token('('),
+            stmt_select,
+            token(')')
+        ))
+        .map(|query| Expr::Exists { not, subquery: Box::new(query) })
+        .parse(i)
+}
+
 static mut between_and: bool = false;
 
 //pratt parser
@@ -378,7 +446,9 @@ where I: Input<Token = char>
             .or(expr_tuple)
             .or(expr_case)
             .or(expr_cast)
-            // .or(expr_column)
+            .or(expr_exists)
+            .or(expr_function)
+            .or(expr_column)
             .parse(input)?;
 
         loop {
@@ -387,7 +457,7 @@ where I: Input<Token = char>
                     break;
                 }
 
-                if l < min { break; }
+                if l < min { break }
 
                 let (r_expr, i) = expr(r).parse(i)?;
 
@@ -396,6 +466,56 @@ where I: Input<Token = char>
                     op, 
                     right: Box::new(r_expr)
                 };
+                input = i;
+                continue;
+            }
+
+            if let Ok((_, i)) = token(string_no_case("IS")).parse(input.clone()) { 
+                
+                if 7 < min { break }
+
+                // if let Ok((not, i)) = opt_not.parse(i) { 
+                
+                let (not, i) = opt_not.parse(i)?;
+
+                if let Ok((_, i)) = token(string_no_case("DISTINCT"))
+                    .andr(token(string_no_case("FROM")))
+                    .parse(i.clone()) 
+                {                       
+                    let (r_expr, i) = expr(8).parse(i)?;
+
+                    lhs = Expr::IsDistinctFrom { 
+                        not, 
+                        left: Box::new(lhs), 
+                        right: Box::new(r_expr) 
+                    };
+                    input = i;
+                    continue;
+                }
+
+                let (r_expr, i) = expr(8).parse(i)?;
+
+                lhs = Expr::Is { 
+                    not, 
+                    left: Box::new(lhs), 
+                    right: Box::new(r_expr) 
+                }; 
+                input = i;
+                continue;
+                // }
+            }
+
+
+            if let Ok((_, i)) = token(string_no_case("COLLATE")).parse(input.clone()) {
+                if 21 < min { break }
+
+                let (collation, i) = token(ident).parse(i)?;
+
+                lhs = Expr::Collate { 
+                    expr: Box::new(lhs), 
+                    collation 
+                };
+
                 input = i;
                 continue;
             }
@@ -420,65 +540,69 @@ where I: Input<Token = char>
                 continue;
             }
 
-            if let Ok((not, i)) = opt_not.parse(input.clone()) {
 
-                if let Ok((_, i)) = token(string_no_case("NULL")).parse(i.clone()) {
-                    if 7 < min { break; }
-                    lhs = Expr::IsNull {
-                        not,
-                        expr: Box::new(lhs)
-                    };
-                    input = i;
-                    continue;
-                }
 
-                if let Ok((_, i)) = token(string_no_case("LIKE")).parse(i.clone()) {
-                    if 8 < min { break; }
+            // if let Ok((not, i)) = opt_not.parse(input.clone()) {
 
-                    let (mut pattern, i) = expr(7).parse(i)?;
+            let ((not, i)) =  opt_not.parse(input.clone())?;
 
-                    let (escape, i) = option(token(string_no_case("ESCAPE")).andr(expr(0)))
-                        .map(|o| o.map(Box::new))
-                        .parse(i)?;
-
-                    lhs = Expr::Like { 
-                        not, 
-                        expr: Box::new(lhs), 
-                        pattern: Box::new(pattern), 
-                        escape
-                    };
-
-                    input = i;
-                    continue;
-                }
-
-                if let Ok((_, i)) = token(string_no_case("BETWEEN")).parse(i.clone()) {
-                    if 8 < min { break; }
-
-                    unsafe {
-                        between_and = true;
-                    }
-
-                    let (mut l_expr, i) = expr(7).parse(i)?;
-
-                    let (_, i) = token(string_no_case("AND")).parse(i)?;
-
-                    let (r_expr, i) = expr(0).parse(i)?;
-
-                    unsafe {
-                        between_and = false;
-                    }
-
-                    lhs = Expr::Between { 
-                        not, 
-                        expr: Box::new(lhs), 
-                        left: Box::new(l_expr), 
-                        right: Box::new(r_expr)
-                    };
-                    input = i;
-                    continue;
-                }
+            if let Ok((_, i)) = token(string_no_case("NULL")).parse(i.clone()) {
+                if 7 < min { break; }
+                lhs = Expr::IsNull {
+                    not,
+                    expr: Box::new(lhs)
+                };
+                input = i;
+                continue;
             }
+
+            if let Ok((_, i)) = token(string_no_case("LIKE")).parse(i.clone()) {
+                if 8 < min { break; }
+
+                let (mut pattern, i) = expr(7).parse(i)?;
+
+                let (escape, i) = option(token(string_no_case("ESCAPE")).andr(expr(0)))
+                    .map(|o| o.map(Box::new))
+                    .parse(i)?;
+
+                lhs = Expr::Like { 
+                    not, 
+                    expr: Box::new(lhs), 
+                    pattern: Box::new(pattern), 
+                    escape
+                };
+
+                input = i;
+                continue;
+            }
+
+            if let Ok((_, i)) = token(string_no_case("BETWEEN")).parse(i.clone()) {
+                if 8 < min { break; }
+
+                unsafe {
+                    between_and = true;
+                }
+
+                let (mut l_expr, i) = expr(7).parse(i)?;
+
+                let (_, i) = token(string_no_case("AND")).parse(i)?;
+
+                let (r_expr, i) = expr(0).parse(i)?;
+
+                unsafe {
+                    between_and = false;
+                }
+
+                lhs = Expr::Between { 
+                    not, 
+                    expr: Box::new(lhs), 
+                    left: Box::new(l_expr), 
+                    right: Box::new(r_expr)
+                };
+                input = i;
+                continue;
+            }
+            // }
 
             break;
         }
@@ -541,7 +665,7 @@ where I: Input<Token = char>
 
 #[test]
 fn test() {
-    let (expr, i) = expr(0).parse("cast ( 2 as Integer  )").unwrap();
+    let (expr, i) = expr(0).parse("exists ()").unwrap();
     println!("{:#?}", expr);
 
     // let mut visitor = TestVisitor(vec![]);
