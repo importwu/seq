@@ -80,9 +80,9 @@ pub struct WhenCause {
 pub enum Expr {
     Literal(Literal),
     BinaryOp {
-        left: Box<Expr>,
         op: BinaryOperator,
-        right: Box<Expr>
+        left: Box<Expr>,
+        right: Box<Expr>,
     },
     UnaryOp {
         op: UnaryOperator,
@@ -117,13 +117,13 @@ pub enum Expr {
     InSubquery {
         not: bool,
         expr: Box<Expr>,
-        subquery: Box<Query>
+        subquery: Box<Select>
     },
     Exists {
         not: bool,
-        subquery: Box<Query>
+        subquery: Box<Select>
     },
-    Subquery(Box<Query>),
+    Subquery(Box<Select>),
     Column {
         table: Option<Ident>,
         column: Ident
@@ -179,8 +179,60 @@ pub enum DataType {
 }
 
 #[derive(Debug)]
-pub struct Query {
+pub struct Select {
+    body: SelectBody,
+    order_by: Vec<OrderBy>,
+    limit: Limit
+}
 
+#[derive(Debug)]
+pub struct Limit {
+    expr: Expr,
+    offset: Option<Expr>
+}
+
+#[derive(Debug)]
+pub struct OrderBy {
+    expr: Expr,
+    asc: Option<bool>,
+    nulls_first: Option<bool>
+}
+
+#[derive(Debug)]
+pub enum SelectBody {
+    Simple {
+        distinct: bool,
+        projection: Vec<SelectItem>,
+        from: i32,
+        r#where: Option<Expr>,
+        group_by: Vec<Expr>,
+        having: Option<Expr>
+    },
+    Compound {
+        op: CompoundOperator,
+        left: Box<SelectBody>,
+        right: Box<SelectBody>
+    }
+}
+
+#[derive(Debug)]
+pub enum SelectItem {
+    Unnamed(Expr),
+    Named {
+        expr: Expr,
+        alias: Ident
+    },
+    Wildcard,
+    TableWildcard(Ident)
+}
+
+
+#[derive(Debug)]
+pub enum CompoundOperator {
+    Union,
+    UnionAll,
+    Intersect,
+    Except
 }
 
 #[derive(Debug)]
@@ -189,15 +241,12 @@ pub struct Ident {
     pub quote: Option<char>
 }
 
-#[derive(Debug)]
-pub enum Stmt {
-    Select(Box<Query>)
-}
 
-fn stmt_select<I>(input: I) -> ParseResult<Query, I> 
+fn stmt_select<I>(input: I) -> ParseResult<Select, I> 
 where I: Input<Token = char>
 {
-    Ok((Query{}, input))
+    // Ok((Select{}, input))
+    todo!()
 }
 
 
@@ -665,7 +714,7 @@ where I: Input<Token = char>
 
 #[test]
 fn test() {
-    let (expr, i) = expr(0).parse("exists ()").unwrap();
+    let (expr, i) = expr(0).parse("2").unwrap();
     println!("{:#?}", expr);
 
     // let mut visitor = TestVisitor(vec![]);
