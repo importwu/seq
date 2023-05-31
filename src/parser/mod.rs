@@ -1,5 +1,3 @@
-use std::collections::{HashMap, HashSet};
-
 use rtor::{
     Parser,
     Input,
@@ -14,7 +12,8 @@ use rtor::{
         between,
         recognize, 
         many1,
-        pair, sep_by
+        pair,
+        sep_by,
     },
     primitive::{
         digit,
@@ -26,7 +25,9 @@ use rtor::{
         anychar,
         satisfy,
         take_while,
-        oneof
+        oneof,
+        pure,
+        space
     }
 };
 
@@ -202,8 +203,8 @@ pub struct OrderBy {
 pub enum SelectBody {
     Simple {
         distinct: bool,
-        projection: Vec<SelectItem>,
-        from: i32,
+        select: Vec<SelectItem>,
+        from: Option<FromItem>,
         r#where: Option<Expr>,
         group_by: Vec<Expr>,
         having: Option<Expr>
@@ -215,12 +216,50 @@ pub enum SelectBody {
     }
 }
 
+
+#[derive(Debug)]
+pub enum FromItem {
+    Table {
+        name: Ident,
+        alias: Option<Ident>
+    },
+    Subquery {
+        query: Box<Select>,
+        alias: Option<Ident>
+    },
+    Join {
+        op: JoinOperator,
+        left: Box<FromItem>,
+        right: Box<FromItem>,
+        constraint: Option<JoinConstraint>
+    }
+}
+
+
+#[derive(Debug)]
+pub enum JoinConstraint {
+    On(Expr),
+    Using(Vec<Ident>)
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum JoinOperator {
+    Left,
+    Right,
+    Full,
+    Inner,
+    NaturalLeft,
+    NaturalRight,
+    NaturalFull,
+    NaturalInner,
+    Cross
+}
+
 #[derive(Debug)]
 pub enum SelectItem {
-    Unnamed(Expr),
-    Named {
+    Expr {
         expr: Expr,
-        alias: Ident
+        alias: Option<Ident>
     },
     Wildcard,
     TableWildcard(Ident)
@@ -245,10 +284,176 @@ pub struct Ident {
 fn stmt_select<I>(input: I) -> ParseResult<Select, I> 
 where I: Input<Token = char>
 {
-    // Ok((Select{}, input))
+    
     todo!()
 }
 
+fn select_body<I>(min: u8) -> impl Parser<I, Output = SelectBody, Error = Error<I::Token>> 
+where I: Input<Token = char>
+{
+    move |input: I| {
+        let (_, i) = string_no_case("SELECT").parse(input)?;
+
+        let (distinct, i) = token(
+            string_no_case("DISTINCT").map(|_| true)
+                .or(string_no_case("ALL").map(|_| false))
+                .or(pure(false))
+        ).parse(i)?;
+
+
+        let (select, i) = sep_by1(token(select_item), token(',')).parse(i)?;
+
+        let (_, i) = skip_many(space).parse(i)?;
+
+        let (from, i) = option(string_no_case("FROM").andr(from_item(0))).parse(i)?;
+
+        let (r#where, i) = option(string_no_case("WHERE").andr(expr(0))).parse(i)?;
+
+
+        //error
+        let (group_by, i) = option(string_no_case("GROUP")
+            .andr(string_no_case("By"))
+            .andr(sep_by1(expr(0), token(','))))
+            .parse(i)?;
+
+        let (having, i) = option(string_no_case("HAVING").andr(expr(0))).parse(i)?;
+
+        let mut left = SelectBody::Simple { 
+            distinct, 
+            select, 
+            from, 
+            r#where, 
+            group_by, 
+            having 
+        };
+
+        let mut input = i;
+
+        loop {
+            if let Ok((op, i)) = token(compound_op).parse(input.clone()) {
+                if 1 < min { break; }
+                let (right, i) = token(select_body(2)).parse(i)?;
+                left = SelectBody::Compound { 
+                    op, 
+                    left: Box::new(left), 
+                    right: Box::new(right)
+                };
+                input = i;
+                continue;
+            }
+            break;
+        }
+
+        return Ok((left, i))
+    }
+
+}
+
+fn compound_op<I>(input: I) -> ParseResult<CompoundOperator, I> 
+where I: Input<Token = char>
+{
+    string_no_case("UNION").map(|_| CompoundOperator::Union)
+        .or(string_no_case("UNION").andr(string_no_case("ALL")).map(|_| CompoundOperator::UnionAll))
+        .or(string_no_case("INTERSECT").map(|_| CompoundOperator::Intersect))
+        .or(string_no_case("EXCEPT").map(|_| CompoundOperator::Except))
+        .parse(input)
+}
+
+
+fn from_item<I>(min: u8) -> impl Parser<I, Output = FromItem, Error = Error<I::Token>>
+where I: Input<Token = char>
+{
+    move |input: I| {
+        let (mut left, mut input) = ident
+            .and(option(option(token(string_no_case("AS"))).andr(token(ident))))
+            .map(|(name, alias)| FromItem::Table { name, alias })
+            .or(between(token('('), token(from_item(0)), token(')')))
+            .parse(input)?;
+
+        loop {
+            if let Ok((op, i)) =  token(join_op).parse(input.clone()) {
+                if 1 < min { break; }
+
+                let (right, i) = token(from_item(2)).parse(i)?;
+                let (constraint, i) = token(option(join_constraint)).parse(i)?;
+
+                left = FromItem::Join { 
+                    op, 
+                    left: Box::new(left), 
+                    right: Box::new(right), 
+                    constraint
+                };
+                input = i;
+                continue;   
+            }
+            break;
+        }
+        return Ok((left, input))
+    }    
+}
+
+#[test]
+fn test_from_item() {
+
+    println!("{:#?}", from_item(0).parse("a,(b,c),d"))
+}
+
+fn join_constraint<I>(input: I) -> ParseResult<JoinConstraint, I> 
+where I: Input<Token = char>
+{
+    string_no_case("ON").andr(expr(0)).map(JoinConstraint::On)
+        .or(string_no_case("USING").andr(between(
+            token('('),
+            sep_by1(token(ident), token(',')),
+        token(')')
+        )).map(JoinConstraint::Using))
+        .parse(input)
+}
+
+fn join_op<I>(input: I) -> ParseResult<JoinOperator, I> 
+where I: Input<Token = char>
+{
+    ','.map(|_| JoinOperator::Cross)
+        .or(string_no_case("CROSS").andr(token(string_no_case("JOIN"))).map(|_| JoinOperator::Cross))
+        .or(|input: I| {
+            let (natural, i) = option(string_no_case("NATURAL")).parse(input)?;
+            
+            match natural {
+                None => string_no_case("LEFT").map(|_| JoinOperator::Left)
+                    .or(string_no_case("RIGHT").map(|_| JoinOperator::Right))
+                    .or(string_no_case("FULL").map(|_| JoinOperator::Full))
+                    .andl(token(option(string_no_case("OUTER"))))
+                    .or(string_no_case("INNER").map(|_| JoinOperator::Inner))
+                    .or(pure(JoinOperator::Inner))
+                    .andl(token(string_no_case("JOIN")))
+                    .parse(i),
+                Some(_) => token(string_no_case("LEFT").map(|_| JoinOperator::NaturalLeft)
+                        .or(string_no_case("RIGHT").map(|_| JoinOperator::NaturalRight))
+                        .or(string_no_case("FULL").map(|_| JoinOperator::NaturalFull))
+                        .andl(token(option(string_no_case("OUTER"))))
+                        .or(string_no_case("INNER").map(|_| JoinOperator::NaturalInner))
+                        .or(pure(JoinOperator::NaturalInner))
+                        .andl(token(string_no_case("JOIN")))
+                    )
+                    .parse(i),
+            }
+
+        })
+        .parse(input)
+}
+
+
+
+fn select_item<I>(input: I) -> ParseResult<SelectItem, I> 
+where I: Input<Token = char>
+{
+    expr(0)
+        .and(option(option(token(string_no_case("AS"))).andr(token(ident))))
+        .map(|(expr, alias)| SelectItem::Expr { expr, alias })
+        .or('*'.map(|_| SelectItem::Wildcard))
+        .or(ident.andl(token('.')).andl(token('*')).map(SelectItem::TableWildcard))
+        .parse(input)
+}
 
 fn ident<I>(input: I) -> ParseResult<Ident, I> 
 where I: Input<Token = char>
@@ -523,8 +728,6 @@ where I: Input<Token = char>
                 
                 if 7 < min { break }
 
-                // if let Ok((not, i)) = opt_not.parse(i) { 
-                
                 let (not, i) = opt_not.parse(i)?;
 
                 if let Ok((_, i)) = token(string_no_case("DISTINCT"))
@@ -551,7 +754,6 @@ where I: Input<Token = char>
                 }; 
                 input = i;
                 continue;
-                // }
             }
 
 
@@ -589,9 +791,6 @@ where I: Input<Token = char>
                 continue;
             }
 
-
-
-            // if let Ok((not, i)) = opt_not.parse(input.clone()) {
 
             let ((not, i)) =  opt_not.parse(input.clone())?;
 
@@ -651,7 +850,6 @@ where I: Input<Token = char>
                 input = i;
                 continue;
             }
-            // }
 
             break;
         }
@@ -714,7 +912,7 @@ where I: Input<Token = char>
 
 #[test]
 fn test() {
-    let (expr, i) = expr(0).parse("2").unwrap();
+    let (expr, i) = expr(0).parse("1+2+3").unwrap();
     println!("{:#?}", expr);
 
     // let mut visitor = TestVisitor(vec![]);
