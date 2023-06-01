@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use rtor::{
     Parser,
     Input,
@@ -31,6 +33,7 @@ use rtor::{
     }
 };
 
+use lazy_static::lazy_static;
 
 #[derive(Debug)]
 pub enum Literal {
@@ -292,42 +295,37 @@ fn select_body<I>(min: u8) -> impl Parser<I, Output = SelectBody, Error = Error<
 where I: Input<Token = char>
 {
     move |input: I| {
-        let (_, i) = string_no_case("SELECT").parse(input)?;
+        let (_, i) =keyword(Keyword::Select).parse(input)?;
 
         let (distinct, i) = token(
-            string_no_case("DISTINCT").map(|_| true)
-                .or(string_no_case("ALL").map(|_| false))
+            keyword(Keyword::Distinct).map(|_| true)
+                .or(keyword(Keyword::All).map(|_| false))
                 .or(pure(false))
-        ).parse(i)?;
+            )
+            .parse(i)?;
 
 
         let (select, i) = sep_by1(token(select_item), token(',')).parse(i)?;
 
-        let (_, i) = skip_many(space).parse(i)?;
+        let (from, i) = token(option(keyword(Keyword::From).andr(token(from_item(0))))).parse(i)?;
 
-        let (from, i) = option(string_no_case("FROM").andr(from_item(0))).parse(i)?;
+        let (r#where, i) = token(option(keyword(Keyword::Where).andr(expr(0)))).parse(i)?;
 
-        let (r#where, i) = option(string_no_case("WHERE").andr(expr(0))).parse(i)?;
-
-
-        //error
-        let (group_by, i) = option(string_no_case("GROUP")
-            .andr(string_no_case("By"))
-            .andr(sep_by1(expr(0), token(','))))
+        let (group_by, i) = token(option(keyword(Keyword::Group)
+            .andr(token(keyword(Keyword::By)))
+            .andr(sep_by1(expr(0), token(',')))))
             .parse(i)?;
 
-        let (having, i) = option(string_no_case("HAVING").andr(expr(0))).parse(i)?;
+        let (having, mut input) = token(option(keyword(Keyword::Having).andr(expr(0)))).parse(i)?;
 
         let mut left = SelectBody::Simple { 
             distinct, 
             select, 
             from, 
             r#where, 
-            group_by, 
+            group_by: group_by.unwrap_or(vec![]), 
             having 
         };
-
-        let mut input = i;
 
         loop {
             if let Ok((op, i)) = token(compound_op).parse(input.clone()) {
@@ -344,7 +342,7 @@ where I: Input<Token = char>
             break;
         }
 
-        return Ok((left, i))
+        return Ok((left, input))
     }
 
 }
@@ -365,7 +363,7 @@ where I: Input<Token = char>
 {
     move |input: I| {
         let (mut left, mut input) = ident
-            .and(option(option(token(string_no_case("AS"))).andr(token(ident))))
+            .and(option(option(token(keyword(Keyword::As))).andr(token(ident))))
             .map(|(name, alias)| FromItem::Table { name, alias })
             .or(between(token('('), token(from_item(0)), token(')')))
             .parse(input)?;
@@ -392,67 +390,81 @@ where I: Input<Token = char>
     }    
 }
 
+#[derive(Debug, PartialEq, Eq)]
+pub enum Keyword {
+    Select,
+    Natural,
+    Left,
+    Right,
+    Full,
+    Inner,
+    Cross,
+    Outer,
+    Join,
+    On,
+    Using,
+    As,
+    Distinct,
+    All,
+    From,
+    Where,
+    Group,
+    By,
+    Having
+}
+
+lazy_static! {
+    static ref KEYWORDS: HashMap<&'static str, Keyword> = {
+        let mut keywords = HashMap::new();
+        keywords.insert("SELECT", Keyword::Select);
+        keywords.insert("NATURAL", Keyword::Natural);
+        keywords.insert("LEFT", Keyword::Left);
+        keywords.insert("RIGHT", Keyword::Right);
+        keywords.insert("FULL", Keyword::Full);
+        keywords.insert("INNER", Keyword::Inner);
+        keywords.insert("CROSS", Keyword::Cross);
+        keywords.insert("OUTER", Keyword::Outer);
+        keywords.insert("JOIN", Keyword::Join);
+        keywords.insert("ON", Keyword::On);
+        keywords.insert("USING", Keyword::Using);
+        keywords.insert("AS", Keyword::As);
+        keywords.insert("DISTINCT", Keyword::Distinct);
+        keywords.insert("ALL", Keyword::All);
+        keywords.insert("FROM", Keyword::From);
+        keywords.insert("WHERE", Keyword::Where);
+        keywords.insert("GROUP", Keyword::Group);
+        keywords.insert("BY", Keyword::By);
+        keywords.insert("HAVING", Keyword::Having);
+        keywords
+    };
+}
+
+fn keyword<I>(keyword: Keyword) -> impl Parser<I, Output = (), Error = Error<I::Token>> 
+where I: Input<Token = char>
+{   
+    move |input: I| {
+        let (word, i) = word.map(|w|w.to_uppercase()).parse(input)?;
+
+        match KEYWORDS.get(word.as_str()) {
+            Some(k) if *k == keyword => Ok(((), i)),
+            None | Some(_) => Err(Error::Custom("expect keyword".into())),
+        }
+    }
+}
+
+fn word<I>(input: I) -> ParseResult<String, I> 
+where I: Input<Token = char>
+{
+    let word = satisfy(|c: &char| c.is_alphabetic())
+        .andr(skip_many('_'.or(digit).or( satisfy(|c: &char| c.is_alphabetic()))));
+
+    recognize(word).map(|i: I| i.tokens().collect::<String>()).parse(input)
+}
+
 #[test]
 fn test_from_item() {
 
-    println!("{:#?}", from_item(0).parse("a,(b,c),d"))
-}
-
-fn join_constraint<I>(input: I) -> ParseResult<JoinConstraint, I> 
-where I: Input<Token = char>
-{
-    string_no_case("ON").andr(expr(0)).map(JoinConstraint::On)
-        .or(string_no_case("USING").andr(between(
-            token('('),
-            sep_by1(token(ident), token(',')),
-        token(')')
-        )).map(JoinConstraint::Using))
-        .parse(input)
-}
-
-fn join_op<I>(input: I) -> ParseResult<JoinOperator, I> 
-where I: Input<Token = char>
-{
-    ','.map(|_| JoinOperator::Cross)
-        .or(string_no_case("CROSS").andr(token(string_no_case("JOIN"))).map(|_| JoinOperator::Cross))
-        .or(|input: I| {
-            let (natural, i) = option(string_no_case("NATURAL")).parse(input)?;
-            
-            match natural {
-                None => string_no_case("LEFT").map(|_| JoinOperator::Left)
-                    .or(string_no_case("RIGHT").map(|_| JoinOperator::Right))
-                    .or(string_no_case("FULL").map(|_| JoinOperator::Full))
-                    .andl(token(option(string_no_case("OUTER"))))
-                    .or(string_no_case("INNER").map(|_| JoinOperator::Inner))
-                    .or(pure(JoinOperator::Inner))
-                    .andl(token(string_no_case("JOIN")))
-                    .parse(i),
-                Some(_) => token(string_no_case("LEFT").map(|_| JoinOperator::NaturalLeft)
-                        .or(string_no_case("RIGHT").map(|_| JoinOperator::NaturalRight))
-                        .or(string_no_case("FULL").map(|_| JoinOperator::NaturalFull))
-                        .andl(token(option(string_no_case("OUTER"))))
-                        .or(string_no_case("INNER").map(|_| JoinOperator::NaturalInner))
-                        .or(pure(JoinOperator::NaturalInner))
-                        .andl(token(string_no_case("JOIN")))
-                    )
-                    .parse(i),
-            }
-
-        })
-        .parse(input)
-}
-
-
-
-fn select_item<I>(input: I) -> ParseResult<SelectItem, I> 
-where I: Input<Token = char>
-{
-    expr(0)
-        .and(option(option(token(string_no_case("AS"))).andr(token(ident))))
-        .map(|(expr, alias)| SelectItem::Expr { expr, alias })
-        .or('*'.map(|_| SelectItem::Wildcard))
-        .or(ident.andl(token('.')).andl(token('*')).map(SelectItem::TableWildcard))
-        .parse(input)
+    println!("{:#?}", select_body(0).parse("select * from a,b on c where 2 group by 3 having 4"))
 }
 
 fn ident<I>(input: I) -> ParseResult<Ident, I> 
@@ -462,17 +474,14 @@ where I: Input<Token = char>
 
     let end_quote = match start_quote {
         None => {
-            let ident_part = oneof("_@#")
-                .or(satisfy(|c: &char| c.is_alphabetic()))
-                .andr(skip_many(oneof("_@#$").or(satisfy(|c: &char| c.is_alphabetic())).or(digit)));
-            let (ident_part, i) = recognize(ident_part)
-                .map(|o: I| o.tokens().collect::<String>())
-                .parse(i)?;
+            let (word, i) = word.parse(i)?;
             
-            //check keyword todo!
+            if KEYWORDS.contains_key(word.to_uppercase().as_str()) {
+                return Err(Error::Custom("expect identify".into()))
+            }
 
             let ident = Ident {
-                value: ident_part,
+                value: word,
                 quote: None
             };
             return Ok((ident, i))            
@@ -484,10 +493,70 @@ where I: Input<Token = char>
     };
 
     token(take_while(move|c| *c != end_quote && *c != ' '))
-        .map(|o: I| Ident { value: o.tokens().collect(), quote: start_quote })
+        .map(|i: I| Ident { value: i.tokens().collect(), quote: start_quote })
         .andl(token(end_quote))
         .parse(i)
 }
+
+
+fn join_constraint<I>(input: I) -> ParseResult<JoinConstraint, I> 
+where I: Input<Token = char>
+{
+    keyword(Keyword::On).andr(expr(0)).map(JoinConstraint::On)
+        .or(keyword(Keyword::Using).andr(
+            between(
+                token('('),
+                sep_by1(token(ident), token(',')),
+                token(')')
+            )
+        ).map(JoinConstraint::Using))
+        .parse(input)
+}
+
+fn join_op<I>(input: I) -> ParseResult<JoinOperator, I> 
+where I: Input<Token = char>
+{
+    ','.map(|_| JoinOperator::Cross)
+        .or(keyword(Keyword::Cross).andr(token(keyword(Keyword::Join))).map(|_| JoinOperator::Cross))
+        .or(|input: I| {
+            let (natural, i) = option(keyword(Keyword::Natural)).parse(input)?;
+            
+            match natural {
+                None => keyword(Keyword::Left).map(|_| JoinOperator::Left)
+                    .or(keyword(Keyword::Right).map(|_| JoinOperator::Right))
+                    .or(keyword(Keyword::Full).map(|_| JoinOperator::Full))
+                    .andl(token(option(keyword(Keyword::Outer))))
+                    .or(keyword(Keyword::Inner).map(|_| JoinOperator::Inner))
+                    .or(pure(JoinOperator::Inner))
+                    .andl(token(keyword(Keyword::Join)))
+                    .parse(i),
+                Some(_) => token(
+                        keyword(Keyword::Left).map(|_| JoinOperator::NaturalLeft)
+                            .or(keyword(Keyword::Right).map(|_| JoinOperator::NaturalRight))
+                            .or(keyword(Keyword::Full).map(|_| JoinOperator::NaturalFull))
+                            .andl(token(option(keyword(Keyword::Outer))))
+                            .or(keyword(Keyword::Inner).map(|_| JoinOperator::NaturalInner))
+                            .or(pure(JoinOperator::NaturalInner))
+                            .andl(token(keyword(Keyword::Join)))
+                        )
+                    .parse(i),
+            }
+
+        })
+        .parse(input)
+}
+
+fn select_item<I>(input: I) -> ParseResult<SelectItem, I> 
+where I: Input<Token = char>
+{
+    expr(0)
+        .and(option(option(token(keyword(Keyword::As))).andr(token(ident))))
+        .map(|(expr, alias)| SelectItem::Expr { expr, alias })
+        .or('*'.map(|_| SelectItem::Wildcard))
+        .or(ident.andl(token('.')).andl(token('*')).map(SelectItem::TableWildcard))
+        .parse(input)
+}
+
 
 fn numeric_literal<I>(input: I) -> ParseResult<Literal, I> 
 where I: Input<Token = char>

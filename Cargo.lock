@@ -3,13 +3,20 @@
 version = 3
 
 [[package]]
+name = "lazy_static"
+version = "1.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e2abad23fbc42b3700f2f279844dc832adb2b2eb069b2df918f455c4e18cc646"
+
+[[package]]
 name = "rtor"
 version = "0.1.0"
-source = "git+https://github.com/importwu/rtor.git#6011dd9c0ec4aa2984282b87b6ddac81cd107d2d"
+source = "git+https://github.com/importwu/rtor.git#7484c930027cb8c7b042d4425de53f5867e9eea1"
 
 [[package]]
 name = "seq"
 version = "0.1.0"
 dependencies = [
+ "lazy_static",
  "rtor",
 ]
