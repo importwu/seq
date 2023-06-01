@@ -185,8 +185,8 @@ pub enum DataType {
 #[derive(Debug)]
 pub struct Select {
     body: SelectBody,
-    order_by: Vec<OrderBy>,
-    limit: Limit
+    order_by: Vec<OrderItem>,
+    limit: Option<Limit>
 }
 
 #[derive(Debug)]
@@ -196,7 +196,7 @@ pub struct Limit {
 }
 
 #[derive(Debug)]
-pub struct OrderBy {
+pub struct OrderItem {
     expr: Expr,
     asc: Option<bool>,
     nulls_first: Option<bool>
@@ -287,8 +287,36 @@ pub struct Ident {
 fn stmt_select<I>(input: I) -> ParseResult<Select, I> 
 where I: Input<Token = char>
 {
-    
-    todo!()
+    let (body, i) = select_body(0).parse(input)?;
+    let (order_by, i) = token(option(order_by)).parse(i)?;
+    let (limit, i) = token(option(limit)).parse(i)?;
+
+    Ok((Select {body, order_by: order_by.unwrap_or(vec![]), limit}, i))
+}
+
+fn order_by<I>(input: I) -> ParseResult<Vec<OrderItem>, I> 
+where I: Input<Token = char>
+{
+    let order_item = expr(0)
+        .and(
+        token(option(keyword(Keyword::Asc).map(|_| true)
+                    .or(keyword(Keyword::Desc).map(|_| false))))
+        )
+        .and(
+            token(option(
+                keyword(Keyword::Nulls).andr(token(keyword(Keyword::First).map(|_| true).or(keyword(Keyword::Last).map(|_| false)) ))
+            ))
+        )
+        .map(|((expr, asc), nulls_first)| OrderItem {expr, asc, nulls_first});
+
+     sep_by1(order_item, token(','))
+        .parse(input)
+}
+
+fn limit<I>(input: I) -> ParseResult<Limit, I> 
+where I: Input<Token = char>
+{
+
 }
 
 fn select_body<I>(min: u8) -> impl Parser<I, Output = SelectBody, Error = Error<I::Token>> 
@@ -410,7 +438,14 @@ pub enum Keyword {
     Where,
     Group,
     By,
-    Having
+    Having,
+    Order,
+    Limit,
+    Asc,
+    Desc,
+    Nulls,
+    First,
+    Last
 }
 
 lazy_static! {
@@ -435,6 +470,8 @@ lazy_static! {
         keywords.insert("GROUP", Keyword::Group);
         keywords.insert("BY", Keyword::By);
         keywords.insert("HAVING", Keyword::Having);
+        keywords.insert("ORDER", Keyword::Order);
+        keywords.insert("LIMIT", Keyword::Limit);
         keywords
     };
 }
