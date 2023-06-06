@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::fmt;
 
 use rtor::{
     Parser,
@@ -15,7 +16,7 @@ use rtor::{
         recognize, 
         many1,
         pair,
-        sep_by,
+        sep_by, ref_mut,
     },
     primitive::{
         digit,
@@ -75,7 +76,7 @@ pub enum UnaryOperator {
 
 #[derive(Debug)]
 pub struct WhenCause {
-    expr: Expr,
+    condition: Expr,
     result: Expr
 }
 
@@ -110,8 +111,8 @@ pub enum Expr {
     },
     Case {
         operand: Option<Box<Expr>>,
-        when_cause: Vec<WhenCause>,
-        else_cause: Option<Box<Expr>>,
+        when: Vec<WhenCause>,
+        r#else: Option<Box<Expr>>,
     },
     InList {
         not: bool,
@@ -299,12 +300,12 @@ where I: Input<Token = char>
 {
     let order_item = expr(0)
         .and(
-        token(option(keyword(Keyword::Asc).map(|_| true)
-                    .or(keyword(Keyword::Desc).map(|_| false))))
+        token(option(Keyword::Asc.map(|_| true)
+                    .or(Keyword::Desc.map(|_| false))))
         )
         .and(
             token(option(
-                keyword(Keyword::Nulls).andr(token(keyword(Keyword::First).map(|_| true).or(keyword(Keyword::Last).map(|_| false)) ))
+                Keyword::Nulls.andr(token(Keyword::First.map(|_| true).or(Keyword::Last.map(|_| false)) ))
             ))
         )
         .map(|((expr, asc), nulls_first)| OrderItem {expr, asc, nulls_first});
@@ -316,18 +317,18 @@ where I: Input<Token = char>
 fn limit<I>(input: I) -> ParseResult<Limit, I> 
 where I: Input<Token = char>
 {
-
+ todo!()
 }
 
 fn select_body<I>(min: u8) -> impl Parser<I, Output = SelectBody, Error = Error<I::Token>> 
 where I: Input<Token = char>
 {
     move |input: I| {
-        let (_, i) =keyword(Keyword::Select).parse(input)?;
+        let (_, i) = Keyword::Select.parse(input)?;
 
         let (distinct, i) = token(
-            keyword(Keyword::Distinct).map(|_| true)
-                .or(keyword(Keyword::All).map(|_| false))
+            Keyword::Distinct.map(|_| true)
+                .or(Keyword::All.map(|_| false))
                 .or(pure(false))
             )
             .parse(i)?;
@@ -335,16 +336,16 @@ where I: Input<Token = char>
 
         let (select, i) = sep_by1(token(select_item), token(',')).parse(i)?;
 
-        let (from, i) = token(option(keyword(Keyword::From).andr(token(from_item(0))))).parse(i)?;
+        let (from, i) = token(option(Keyword::From.andr(token(from_item(0))))).parse(i)?;
 
-        let (r#where, i) = token(option(keyword(Keyword::Where).andr(expr(0)))).parse(i)?;
+        let (r#where, i) = token(option(Keyword::Where.andr(expr(0)))).parse(i)?;
 
-        let (group_by, i) = token(option(keyword(Keyword::Group)
-            .andr(token(keyword(Keyword::By)))
+        let (group_by, i) = token(option(Keyword::Group
+            .andr(token(Keyword::By))
             .andr(sep_by1(expr(0), token(',')))))
             .parse(i)?;
 
-        let (having, mut input) = token(option(keyword(Keyword::Having).andr(expr(0)))).parse(i)?;
+        let (having, mut input) = token(option(Keyword::Having.andr(expr(0)))).parse(i)?;
 
         let mut left = SelectBody::Simple { 
             distinct, 
@@ -391,7 +392,7 @@ where I: Input<Token = char>
 {
     move |input: I| {
         let (mut left, mut input) = ident
-            .and(option(option(token(keyword(Keyword::As))).andr(token(ident))))
+            .and(option(option(token(Keyword::As)).andr(token(ident))))
             .map(|(name, alias)| FromItem::Table { name, alias })
             .or(between(token('('), token(from_item(0)), token(')')))
             .parse(input)?;
@@ -445,8 +446,52 @@ pub enum Keyword {
     Desc,
     Nulls,
     First,
-    Last
+    Last,
+    Case,
+    When,
+    Then,
+    Else,
+    End
 }
+
+impl fmt::Display for Keyword {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Keyword::Select => write!(f, "{}", "SELECT"),
+            Keyword::Natural => write!(f, "{}", "NATURAL"),
+            Keyword::Left => write!(f, "{}", "LEFT"),
+            Keyword::Right => write!(f, "{}", "RIGHT"),
+            Keyword::Full => write!(f, "{}", "FULL"),
+            Keyword::Inner => write!(f, "{}", "INNER"),
+            Keyword::Cross => write!(f, "{}", "CROSS"),
+            Keyword::Outer => write!(f, "{}", "Outer"),
+            Keyword::Join => write!(f, "{}", "JOIN"),
+            Keyword::On => write!(f, "{}", "ON"),
+            Keyword::Using => write!(f, "{}", "USING"),
+            Keyword::As => write!(f, "{}", "AS"),
+            Keyword::Distinct => write!(f, "{}", "DISTINCT"),
+            Keyword::All => write!(f, "{}", "ALL"),
+            Keyword::From => write!(f, "{}", "FROM"),
+            Keyword::Where => write!(f, "{}", "WHERE"),
+            Keyword::Group => write!(f, "{}", "GROUP"),
+            Keyword::By => write!(f, "{}", "BY"),
+            Keyword::Having => write!(f, "{}", "HAVING"),
+            Keyword::Order => write!(f, "{}", "ORDER"),
+            Keyword::Limit => write!(f, "{}", "LIMIT"),
+            Keyword::Asc => write!(f, "{}", "ASC"),
+            Keyword::Desc => write!(f, "{}", "DESC"),
+            Keyword::Nulls => write!(f, "{}", "NULLS"),
+            Keyword::First => write!(f, "{}", "FIRST"),
+            Keyword::Last => write!(f, "{}", "LAST"),
+            Keyword::Case => write!(f, "{}", "CASE"),
+            Keyword::When => write!(f, "{}", "WHEN"),
+            Keyword::Then => write!(f, "{}", "THEN"),
+            Keyword::Else => write!(f, "{}", "ELSE"),
+            Keyword::End => write!(f, "{}", "END"),
+        }
+    }
+}
+
 
 lazy_static! {
     static ref KEYWORDS: HashMap<&'static str, Keyword> = {
@@ -472,30 +517,49 @@ lazy_static! {
         keywords.insert("HAVING", Keyword::Having);
         keywords.insert("ORDER", Keyword::Order);
         keywords.insert("LIMIT", Keyword::Limit);
+        keywords.insert("CASE", Keyword::Case);
+        keywords.insert("WHEN", Keyword::When);
+        keywords.insert("THEN", Keyword::Then);
+        keywords.insert("ELSE", Keyword::Else);
+        keywords.insert("END", Keyword::End);
         keywords
     };
 }
 
-fn keyword<I>(keyword: Keyword) -> impl Parser<I, Output = (), Error = Error<I::Token>> 
-where I: Input<Token = char>
-{   
-    move |input: I| {
-        let (word, i) = word.map(|w|w.to_uppercase()).parse(input)?;
 
-        match KEYWORDS.get(word.as_str()) {
-            Some(k) if *k == keyword => Ok(((), i)),
-            None | Some(_) => Err(Error::Custom("expect keyword".into())),
+
+impl<I> Parser<I> for Keyword 
+where
+    I: Input<Token = char>
+{
+    type Output = ();
+    type Error = Error<I::Token>;
+
+    fn parse(&mut self, input: I) -> Result<(Self::Output, I), Self::Error> {
+        let (word, i) = word.parse(input)?;
+
+        match KEYWORDS.get(word.to_uppercase().as_str()) {
+            Some(k) if k == self => Ok(((), i)),
+            None | Some(_) => Err(Error::Custom(format!("expected keyword '{}', but found '{}'", self, word))),
         }
     }
 }
 
+#[test]
+fn test_keyword() {
+    println!("{:?}", Keyword::Select.parse("fselect"))
+}
+
+
+
 fn word<I>(input: I) -> ParseResult<String, I> 
 where I: Input<Token = char>
 {
-    let word = satisfy(|c: &char| c.is_alphabetic())
-        .andr(skip_many('_'.or(digit).or( satisfy(|c: &char| c.is_alphabetic()))));
-
-    recognize(word).map(|i: I| i.tokens().collect::<String>()).parse(input)
+    let first = |input: I| satisfy(|c: &char| c.is_alphabetic()).or('_').parse(input);
+    let subsequent = skip_many(first.or(digit));
+    recognize(first.andr(subsequent))
+        .map(|i: I| i.tokens().collect::<String>())
+        .parse(input)
 }
 
 #[test]
@@ -539,8 +603,8 @@ where I: Input<Token = char>
 fn join_constraint<I>(input: I) -> ParseResult<JoinConstraint, I> 
 where I: Input<Token = char>
 {
-    keyword(Keyword::On).andr(expr(0)).map(JoinConstraint::On)
-        .or(keyword(Keyword::Using).andr(
+    Keyword::On.andr(expr(0)).map(JoinConstraint::On)
+        .or(Keyword::Using.andr(
             between(
                 token('('),
                 sep_by1(token(ident), token(',')),
@@ -554,27 +618,27 @@ fn join_op<I>(input: I) -> ParseResult<JoinOperator, I>
 where I: Input<Token = char>
 {
     ','.map(|_| JoinOperator::Cross)
-        .or(keyword(Keyword::Cross).andr(token(keyword(Keyword::Join))).map(|_| JoinOperator::Cross))
+        .or(Keyword::Cross.andr(token(Keyword::Join)).map(|_| JoinOperator::Cross))
         .or(|input: I| {
-            let (natural, i) = option(keyword(Keyword::Natural)).parse(input)?;
+            let (natural, i) = option(Keyword::Natural).parse(input)?;
             
             match natural {
-                None => keyword(Keyword::Left).map(|_| JoinOperator::Left)
-                    .or(keyword(Keyword::Right).map(|_| JoinOperator::Right))
-                    .or(keyword(Keyword::Full).map(|_| JoinOperator::Full))
-                    .andl(token(option(keyword(Keyword::Outer))))
-                    .or(keyword(Keyword::Inner).map(|_| JoinOperator::Inner))
+                None => Keyword::Left.map(|_| JoinOperator::Left)
+                    .or(Keyword::Right.map(|_| JoinOperator::Right))
+                    .or(Keyword::Full.map(|_| JoinOperator::Full))
+                    .andl(token(option(Keyword::Outer)))
+                    .or(Keyword::Inner.map(|_| JoinOperator::Inner))
                     .or(pure(JoinOperator::Inner))
-                    .andl(token(keyword(Keyword::Join)))
+                    .andl(token(Keyword::Join))
                     .parse(i),
                 Some(_) => token(
-                        keyword(Keyword::Left).map(|_| JoinOperator::NaturalLeft)
-                            .or(keyword(Keyword::Right).map(|_| JoinOperator::NaturalRight))
-                            .or(keyword(Keyword::Full).map(|_| JoinOperator::NaturalFull))
-                            .andl(token(option(keyword(Keyword::Outer))))
-                            .or(keyword(Keyword::Inner).map(|_| JoinOperator::NaturalInner))
+                        Keyword::Left.map(|_| JoinOperator::NaturalLeft)
+                            .or(Keyword::Right.map(|_| JoinOperator::NaturalRight))
+                            .or(Keyword::Full.map(|_| JoinOperator::NaturalFull))
+                            .andl(token(option(Keyword::Outer)))
+                            .or(Keyword::Inner.map(|_| JoinOperator::NaturalInner))
                             .or(pure(JoinOperator::NaturalInner))
-                            .andl(token(keyword(Keyword::Join)))
+                            .andl(token(Keyword::Join))
                         )
                     .parse(i),
             }
@@ -587,7 +651,7 @@ fn select_item<I>(input: I) -> ParseResult<SelectItem, I>
 where I: Input<Token = char>
 {
     expr(0)
-        .and(option(option(token(keyword(Keyword::As))).andr(token(ident))))
+        .and(option(option(token(Keyword::As)).andr(token(ident))))
         .map(|(expr, alias)| SelectItem::Expr { expr, alias })
         .or('*'.map(|_| SelectItem::Wildcard))
         .or(ident.andl(token('.')).andl(token('*')).map(SelectItem::TableWildcard))
@@ -602,14 +666,14 @@ where I: Input<Token = char>
     let fraction1 = '.'.andr(skip_many1(digit));
     let exponent = 'E'.or('e').andr(opt('+'.or('-'))).andr(skip_many1(digit));
 
-    let unsigned_numeric = skip_many1(digit)
+    let numeric = skip_many1(digit)
         .andr(opt(fraction))
         .or(fraction1)
         .andr(opt(exponent));
 
-    recognize(unsigned_numeric)
-        .map(|o: I| {
-            let s = o.tokens().collect::<String>();
+    recognize(numeric)
+        .map(|i: I| {
+            let s = i.tokens().collect::<String>();
             unsafe {
                 s.parse::<i64>().map(Literal::Integer)
                     .or(s.parse::<f64>().map(Literal::Float))
@@ -619,27 +683,55 @@ where I: Input<Token = char>
         .parse(input)
 }
 
-fn binary_op<I>(input: I) -> ParseResult<(BinaryOperator, u8, u8), I> 
+fn binary_op<I>(mut input: I) -> ParseResult<(BinaryOperator, u8, u8), I> 
 where I: Input<Token = char>
 {
-    string_no_case("OR").map(|_| (BinaryOperator::Or, 1, 2))
-        .or( string_no_case("AND").map(|_| (BinaryOperator::And, 3, 4)))
-        .or('<'.map(|_| (BinaryOperator::Lt, 9, 10)))
-        .or('>'.map(|_| (BinaryOperator::Gt, 9, 10)))
-        // .or("<=".map(|_| (BinaryOperator::LtEq, 9, 10)))
+    // string_no_case("OR").map(|_| (BinaryOperator::Or, 1, 2))
+    //     .or( string_no_case("AND").map(|_| (BinaryOperator::And, 3, 4)))
+    //     .or('<'.map(|_| (BinaryOperator::Lt, 9, 10)))
+    //     .or('>'.map(|_| (BinaryOperator::Gt, 9, 10)))
+    //     .or("<=".map(|_| (BinaryOperator::LtEq, 9, 10)))
         // .or(">=".map(|_| (BinaryOperator::GtEq, 9, 10)))
         // .or('&'.map(|_| (BinaryOperator::BitwiseAnd, 13, 14)))
         // .or('|'.map(|_| (BinaryOperator::BitwiseOr, 13, 14)))
         // .or("<<".map(|_| (BinaryOperator::ShiftLeft, 13, 14)))
         // .or(">>".map(|_| (BinaryOperator::ShiftRight, 13, 14)))
-        .or('+'.map(|_| (BinaryOperator::Plus, 15, 16)))
-        .or('-'.map(|_| (BinaryOperator::Minus, 15, 16)))
-        .or('*'.map(|_| (BinaryOperator::Multiply, 17, 18)))
-        .or('/'.map(|_| (BinaryOperator::Divide, 17, 18)))
+        // .or('+'.map(|_| (BinaryOperator::Plus, 15, 16)))
+        // .or('-'.map(|_| (BinaryOperator::Minus, 15, 16)))
+        // .or('*'.map(|_| (BinaryOperator::Multiply, 17, 18)))
+        // .or('/'.map(|_| (BinaryOperator::Divide, 17, 18)))
         // .or('%'.map(|_| (BinaryOperator::Modulo, 17, 18)))
         // .or("||".map(|_| (BinaryOperator::StringConcat, 19, 20)))
-        .parse(input)
-}
+        // .parse(input)
+
+
+        let op = match input.next() {
+            None => return Err(Error::Eoi),
+            Some('<') => match input.peek() {
+                Some('<') => {input.next(); (BinaryOperator::ShiftLeft, 13, 14)},
+                Some('=') => {input.next(); (BinaryOperator::LtEq, 9, 10)},
+                _ => (BinaryOperator::Lt, 9, 10)
+            }
+            Some('>') => match input.peek() {
+                Some('>') =>  {input.next(); (BinaryOperator::ShiftRight, 13, 14)},
+                Some('=') => {input.next(); (BinaryOperator::GtEq, 9, 10)},
+                _ => (BinaryOperator::Gt, 9, 10)
+            }
+            Some('&') =>  (BinaryOperator::BitwiseAnd, 13, 14),
+            Some('|') => match input.peek() {
+                Some('|') => {input.next(); (BinaryOperator::StringConcat, 19, 20)},
+                _ => (BinaryOperator::BitwiseOr, 13, 14)
+            }
+            Some('+') => (BinaryOperator::Plus, 15, 16),
+            Some('-') => (BinaryOperator::Minus, 15, 16),
+            Some('*') => (BinaryOperator::Multiply, 17, 18),
+            Some('/') => (BinaryOperator::Divide, 17, 18),
+            Some('%') => (BinaryOperator::Modulo, 17, 18),
+            Some(c) => return Err(Error::Unexpected(c))
+        };
+
+        Ok((op, input))
+} 
 
 fn unary_op<I>(input: I) -> ParseResult<(UnaryOperator, u8), I> 
 where I: Input<Token = char>
@@ -663,8 +755,8 @@ fn expr_tuple<I>(input: I) -> ParseResult<Expr, I>
 where I: Input<Token = char>
 {
     between(
-        token('('), 
-        sep_by1(expr(0), token(',')), 
+        '(', 
+        sep_by1(token(expr(0)), token(',')), 
         token(')')
     )
     .map(Expr::Tuple)
@@ -674,31 +766,36 @@ where I: Input<Token = char>
 fn expr_unary<I>(input: I) -> ParseResult<Expr, I>
 where I: Input<Token = char>
 {
-    token(unary_op)
-        .and_then(|(op, l)| 
-            expr(l).map(move |e| Expr::UnaryOp { op, expr: Box::new(e) })
-        )
-        .parse(input)
-
+    let ((op, l), i) = unary_op.parse(input)?;
+    token(expr(l)).map(|e| Expr::UnaryOp { op, expr: Box::new(e) }).parse(i)
 }
 
 fn expr_literal<I>(input: I) -> ParseResult<Expr, I>
 where I: Input<Token = char>
 {
-    token(numeric_literal)
-        .map(Expr::Literal)
-        .parse(input)
+    numeric_literal.map(Expr::Literal).parse(input)
 }
 
 fn expr_case<I>(input: I) -> ParseResult<Expr, I>
 where I: Input<Token = char>
 {
-    let (operand, i) = token(string_no_case("CASE")).andr(option(expr(0).map(Box::new))).parse(input)?;
-    let (when_cause, i) = many1(token(string_no_case("WHEN")).andr(expr(0))
-        .and(token(string_no_case("THEN")).andr(expr(0))).map(|(expr, result)| WhenCause {expr, result}))
+    let (operand, i) = Keyword::Case.andr(token(option(expr(0).map(Box::new)))).parse(input)?;
+    
+    let when = Keyword::When.andr(token(expr(0)));
+    let then = Keyword::Then.andr(token(expr(0)));
+    let (when_then, i) = many1(token(when).and(token(then)).map(|(condition, result)| WhenCause { condition, result }))
         .parse(i)?;
-    let (else_cause, i) = option(token(string_no_case("ELSE")).andr(expr(0).map(Box::new))).andl(token(string_no_case("END"))).parse(i)?;
-    Ok((Expr::Case { operand, when_cause, else_cause}, i))
+
+    let (r#else, i) = token(option(Keyword::Else.andr(token(expr(0)).map(Box::new))))
+        .parse(i)?;
+    
+    let (_, i) = token(Keyword::End).parse(i)?;
+    Ok((Expr::Case { operand, when: when_then, r#else}, i))
+}
+
+#[test]
+fn test_case() {
+    println!("{:#?}", expr(0).parse("1+2"))
 }
 
 fn expr_column<I>(input: I) -> ParseResult<Expr, I> 
@@ -964,57 +1061,7 @@ where I: Input<Token = char>
     }
 }
 
-// use std::ops::ControlFlow;
 
-// pub trait Visitor {
-//     fn pre_visit_expr(&mut self, expr: &Expr) -> ControlFlow<()>;
-//     fn post_visit_expr(&mut self, expr: &Expr);
-// }
-
-// struct TestVisitor(Vec<i64>);
-
-// pub trait AstNode {
-//     fn accept<V: Visitor>(&self, visitor: &mut V) -> ControlFlow<()>;
-// }
-
-// impl AstNode for Expr {
-//     fn accept<V: Visitor>(&self, visitor: &mut V) -> ControlFlow<()> {
-//         visitor.pre_visit_expr(self)?;
-//         match self {
-//             Expr::Between { not, expr, left, right } => {
-//                 expr.accept(visitor)?;
-//                 left.accept(visitor)?;
-//                 right.accept(visitor)?;
-//             }
-//             Expr::Literal(_) => (),
-//             _ => panic!("fuck")
-//         }
-//         visitor.post_visit_expr(self);
-//         ControlFlow::Continue(())
-//     }
-// }
-
-// impl Visitor for TestVisitor {
-//     fn pre_visit_expr(&mut self, expr: &Expr) -> ControlFlow<()> {
-//         match expr {
-//             a@Expr::Between { not, expr, left, right } => {
-//                 if *not {
-//                     return ControlFlow::Break(())
-//                 }
-//                 println!("pre:{:?}", a);
-//             }
-//             a@Expr::Literal(_) => {
-//                 println!("pre:{:?}", a);
-//             }
-//             _ => panic!("fuck")
-//         }
-//         ControlFlow::Continue(())
-//     }
-
-//     fn post_visit_expr(&mut self, expr: &Expr) {
-//         println!("post:{:?}", expr)
-//     }
-// }
 
 #[test]
 fn test() {
