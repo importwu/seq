@@ -11,7 +11,7 @@ checksum = "e2abad23fbc42b3700f2f279844dc832adb2b2eb069b2df918f455c4e18cc646"
 [[package]]
 name = "rtor"
 version = "0.1.0"
-source = "git+https://github.com/importwu/rtor.git#7484c930027cb8c7b042d4425de53f5867e9eea1"
+source = "git+https://github.com/importwu/rtor.git#ecdfa3e8784abdd8c035845b3b46103eba3b304d"
 
 [[package]]
 name = "seq"

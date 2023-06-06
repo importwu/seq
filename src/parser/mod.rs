@@ -1,3 +1,5 @@
+mod tokenizer;
+
 use std::collections::HashMap;
 use std::fmt;
 
@@ -16,7 +18,8 @@ use rtor::{
         recognize, 
         many1,
         pair,
-        sep_by, ref_mut,
+        sep_by, 
+        ref_mut,
     },
     primitive::{
         digit,
@@ -276,12 +279,6 @@ pub enum CompoundOperator {
     UnionAll,
     Intersect,
     Except
-}
-
-#[derive(Debug)]
-pub struct Ident {
-    pub value: String,
-    pub quote: Option<char>
 }
 
 
@@ -1062,14 +1059,22 @@ where I: Input<Token = char>
 }
 
 
-
 #[test]
 fn test() {
     let (expr, i) = expr(0).parse("1+2+3").unwrap();
-    println!("{:#?}", expr);
+    println!("haha{:#?}", expr);
 
     // let mut visitor = TestVisitor(vec![]);
 
     // expr.accept(&mut visitor);
 
 }
+
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Ident {
+    pub value: String,
+    pub quote: Option<char>
+}
+
+
