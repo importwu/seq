@@ -1,3 +1,5 @@
+mod tokenizer;
+
 use std::collections::HashMap;
 
 use rtor::{
@@ -277,12 +279,6 @@ pub enum CompoundOperator {
     Except
 }
 
-#[derive(Debug)]
-pub struct Ident {
-    pub value: String,
-    pub quote: Option<char>
-}
-
 
 fn stmt_select<I>(input: I) -> ParseResult<Select, I> 
 where I: Input<Token = char>
@@ -316,7 +312,7 @@ where I: Input<Token = char>
 fn limit<I>(input: I) -> ParseResult<Limit, I> 
 where I: Input<Token = char>
 {
-
+    todo!()
 }
 
 fn select_body<I>(min: u8) -> impl Parser<I, Output = SelectBody, Error = Error<I::Token>> 
@@ -418,35 +414,6 @@ where I: Input<Token = char>
     }    
 }
 
-#[derive(Debug, PartialEq, Eq)]
-pub enum Keyword {
-    Select,
-    Natural,
-    Left,
-    Right,
-    Full,
-    Inner,
-    Cross,
-    Outer,
-    Join,
-    On,
-    Using,
-    As,
-    Distinct,
-    All,
-    From,
-    Where,
-    Group,
-    By,
-    Having,
-    Order,
-    Limit,
-    Asc,
-    Desc,
-    Nulls,
-    First,
-    Last
-}
 
 lazy_static! {
     static ref KEYWORDS: HashMap<&'static str, Keyword> = {
@@ -964,65 +931,51 @@ where I: Input<Token = char>
     }
 }
 
-// use std::ops::ControlFlow;
-
-// pub trait Visitor {
-//     fn pre_visit_expr(&mut self, expr: &Expr) -> ControlFlow<()>;
-//     fn post_visit_expr(&mut self, expr: &Expr);
-// }
-
-// struct TestVisitor(Vec<i64>);
-
-// pub trait AstNode {
-//     fn accept<V: Visitor>(&self, visitor: &mut V) -> ControlFlow<()>;
-// }
-
-// impl AstNode for Expr {
-//     fn accept<V: Visitor>(&self, visitor: &mut V) -> ControlFlow<()> {
-//         visitor.pre_visit_expr(self)?;
-//         match self {
-//             Expr::Between { not, expr, left, right } => {
-//                 expr.accept(visitor)?;
-//                 left.accept(visitor)?;
-//                 right.accept(visitor)?;
-//             }
-//             Expr::Literal(_) => (),
-//             _ => panic!("fuck")
-//         }
-//         visitor.post_visit_expr(self);
-//         ControlFlow::Continue(())
-//     }
-// }
-
-// impl Visitor for TestVisitor {
-//     fn pre_visit_expr(&mut self, expr: &Expr) -> ControlFlow<()> {
-//         match expr {
-//             a@Expr::Between { not, expr, left, right } => {
-//                 if *not {
-//                     return ControlFlow::Break(())
-//                 }
-//                 println!("pre:{:?}", a);
-//             }
-//             a@Expr::Literal(_) => {
-//                 println!("pre:{:?}", a);
-//             }
-//             _ => panic!("fuck")
-//         }
-//         ControlFlow::Continue(())
-//     }
-
-//     fn post_visit_expr(&mut self, expr: &Expr) {
-//         println!("post:{:?}", expr)
-//     }
-// }
 
 #[test]
 fn test() {
     let (expr, i) = expr(0).parse("1+2+3").unwrap();
-    println!("{:#?}", expr);
+    println!("haha{:#?}", expr);
 
     // let mut visitor = TestVisitor(vec![]);
 
     // expr.accept(&mut visitor);
 
+}
+
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Ident {
+    pub value: String,
+    pub quote: Option<char>
+}
+
+#[derive(Debug, PartialEq, Eq, Copy, Clone)]
+pub enum Keyword {
+    Select,
+    Natural,
+    Left,
+    Right,
+    Full,
+    Inner,
+    Cross,
+    Outer,
+    Join,
+    On,
+    Using,
+    As,
+    Distinct,
+    All,
+    From,
+    Where,
+    Group,
+    By,
+    Having,
+    Order,
+    Limit,
+    Asc,
+    Desc,
+    Nulls,
+    First,
+    Last
 }
