@@ -1,12 +1,15 @@
-use rtor::{
-    Parser,
-    Input,
-    Error,
+use std::str::Chars;
+
+use super::{
+    Keyword,
+    Ident,
+    Punct,
+    Literal,
+    KEYWORDS,
 };
 
 #[derive(Debug)]
-pub struct ParseError(String);
-
+pub struct TokenizeError(String);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Location {
@@ -40,30 +43,12 @@ impl Location {
     }
 }
 
-#[derive(Debug)]
-pub struct TokenizeError(String);
-
-impl<I> Parser<I> for Keyword 
-where I: Input<Token = TokenWithLocation>
-{
-    type Output = ();
-    type Error = ParseError;
-
-    fn parse(&mut self, mut input: I) -> Result<(Self::Output, I), Self::Error> {
-        match input.next() {
-            Some(TokenWithLocation {token: Token::Keyword(keyword), location: _ }) if *self == keyword => Ok(((), input)),
-            Some(x) => Err(ParseError("expected".into())),
-            None => Err(ParseError("end of input".into()))
-        }
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Token {
     Keyword(Keyword),
     Ident(Ident),
     Punct(Punct),
-    Literal(Literal),
+    Literal(Literal)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -71,80 +56,6 @@ pub struct TokenWithLocation {
     pub token: Token,
     pub location: Location,
 }
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Literal {
-    Number(String),
-    Boolean(bool),
-    String(String)
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Ident {
-    pub value: String,
-    pub quote: Option<char>
-}
-
-#[derive(Debug, PartialEq, Eq, Copy, Clone)]
-pub enum Keyword {
-    Select,
-    Natural,
-    Left,
-    Right,
-    Full,
-    Inner,
-    Cross,
-    Outer,
-    Join,
-    On,
-    Using,
-    As,
-    Distinct,
-    All,
-    From,
-    Where,
-    Group,
-    By,
-    Having,
-    Order,
-    Limit,
-    Asc,
-    Desc,
-    Nulls,
-    First,
-    Last
-}
-
-#[derive(Debug, PartialEq, Eq, Copy, Clone)]
-pub enum Punct {
-    Colon,               // :
-    Comma,               // ,
-    Tilde,               // ~
-    Plus,                // +
-    Minus,               // -
-    StringConcat,        // ||
-    Star,                // *
-    Slash,               // /
-    Percent,             // %
-    Ampersand,           // &
-    Vertical,            // |
-    ShiftLeft,           // <<
-    ShiftRight,          // >>
-    Lt,                  // <
-    Gt,                  // >
-    LtEq,                // <=
-    GtEq,                // >=
-    Eq,                  // =
-    DoubleEq,            // ==
-    NotEq,               // <>
-    NotEq2,              // !=
-    Period,              // .
-    LParen,              // (
-    RParen,              // )
-}
-
-use core::num;
-use std::str::Chars;
 
 pub struct Tokenizer<'a> {
     location: Location,
@@ -165,7 +76,7 @@ impl<'a> Tokenizer<'a> {
             tokens.push(TokenWithLocation {
                 token: token?,
                 location: self.location,
-            })
+            });
         }
         Ok(tokens)
     }
@@ -213,7 +124,7 @@ impl<'a> Tokenizer<'a> {
                 '<' => {
                     self.next_char();
                     match self.peek_char() {
-                        Some('<') => return Some(self.tokenize_punct(Punct::Lt)),
+                        Some('<') => return Some(self.tokenize_punct(Punct::ShiftLeft)),
                         Some('>') => return Some(self.tokenize_punct(Punct::NotEq)),
                         Some('=') => return Some(self.tokenize_punct(Punct::LtEq)),
                         _ => return Some(Ok(Token::Punct(Punct::Lt))),
@@ -238,22 +149,99 @@ impl<'a> Tokenizer<'a> {
                     self.next_char();
                     match self.peek_char() {
                         Some('=') => return Some(self.tokenize_punct(Punct::NotEq2)),
-                        _ => return Some(Err(TokenizeError(format!("token error at line {}, column {}.", self.location.line(), self.location.column()))))
+                        _ => return Some(Err(self.token_error("invalid punct")))
                     }
                 }
-                '.' => return Some(self.tokenize_number()),
                 '(' => return Some(self.tokenize_punct(Punct::LParen)),
                 ')' => return Some(self.tokenize_punct(Punct::RParen)),
-                '0'..='9' => return Some(self.tokenize_number()), 
-                ch => {
-                    println!("{:?}", ch);
-                    unreachable!()
+                '.' | '0'..='9' => return Some(self.tokenize_number_or_period()),
+                '\'' => return Some(self.tokenize_string()),
+                _ => return Some(self.tokenize_keyword_or_ident_or_bool())
+            }
+        }
+    }
+
+    fn tokenize_keyword_or_ident_or_bool(&mut self) -> Result<Token, TokenizeError> {
+        match unsafe { self.peek_char().unwrap_unchecked() } {
+            ch@('"' | '`' | '[') => {
+                self.next_char();
+                self.consume_whitespace();
+                let word = String::from(self.extract_word()?);
+                self.consume_whitespace();
+                let end_quote = match ch {
+                    '"' => '"',
+                    '`' => '`',
+                    '[' => ']',
+                    _ => unreachable!()
+                };
+                match self.next_char() {
+                    Some(end_quote) => Ok(Token::Ident(Ident {
+                        value: word,
+                        quote: Some(ch),
+                    })),
+                    _ => Err(self.token_error("invalid ident"))
+                }
+            }  
+            _ => {
+                let word = self.extract_word()?;
+                let word_uppercase = word.to_uppercase();
+                if word_uppercase == "TRUE"{
+                    return Ok(Token::Literal(Literal::Boolean(true)));
+                }
+                if word_uppercase == "FALSE" {
+                    return Ok(Token::Literal(Literal::Boolean(false)));
+                }
+                match KEYWORDS.get(word_uppercase.as_str()) {
+                    Some(&keyword) => Ok(Token::Keyword(keyword)),
+                    _ => Ok(Token::Ident(Ident {
+                        value: word.into(),
+                        quote: None
+                    }))
                 }
             }
         }
     }
 
-    fn tokenize_number(&mut self) -> Result<Token, TokenizeError> {
+    fn extract_word(&mut self) -> Result<&str, TokenizeError> {
+        let s = self.chars.as_str();
+        let mut len = 0;
+        match self.next_char() {
+            Some(ch) if ch.is_alphabetic() | ch.eq(&'_')  => {
+                len += ch.len_utf8();
+                loop {
+                    match self.peek_char() {
+                        Some(ch) if ch.is_alphabetic() | ch.is_ascii_digit() | ch.eq(&'_') | ch.eq(&'$') => {
+                            self.next_char();
+                            len += ch.len_utf8();
+                            continue;
+                        }
+                        _ => break,
+                    }
+                }
+            }
+            _ => return Err(self.token_error("invalid token"))
+        }
+        Ok(&s[..len])
+    }
+
+    fn tokenize_string(&mut self) -> Result<Token, TokenizeError> {
+        self.next_char();
+        let mut len = 0;
+        let s = self.chars.as_str();
+        loop {
+            match self.next_char() {
+                Some('\'') => break,
+                Some(ch) => {
+                    len += ch.len_utf8();
+                    continue;
+                },
+                None => return Err(self.token_error("invalid string"))
+            }
+        }
+        Ok(Token::Literal(Literal::String(s[..len].into())))
+    }
+
+    fn tokenize_number_or_period(&mut self) -> Result<Token, TokenizeError> {
         let s = self.chars.as_str();
         let mut len = 0;
         let ch = match self.next_char() {
@@ -276,13 +264,11 @@ impl<'a> Tokenizer<'a> {
                                         len += 1;
                                         continue;
                                     }
-                                    Some(ch) => break Some(ch),
-                                    None => break None,
+                                    ch => break ch,
                                 }
                             }
                         }
-                        Some(ch) => break Some(ch),
-                        None => break None,
+                        ch => break ch,
                     }
                 }
             }
@@ -297,15 +283,14 @@ impl<'a> Tokenizer<'a> {
                                 len += 1;
                                 continue;
                             }
-                            Some(ch) => break Some(ch),
-                            None => break None
+                            ch => break ch,
                         }
                     }
                 } else {
-                    return Err(TokenizeError("token error invalid number".into()))
+                    return Ok(Token::Punct(Punct::Period))
                 }
             }
-            _ => return Err(TokenizeError("token error invalid number".into()))
+            _ => unreachable!()
         };
 
         match ch {
@@ -318,7 +303,7 @@ impl<'a> Tokenizer<'a> {
                         len += 1;
                     }
                     Some('0'..='9') => (),
-                    _ => return Err(TokenizeError("token error invalid number".into()))
+                    _ => return Err(self.token_error("invalid number"))
                 }
 
                 if let Some('0'..='9') = self.next_char() {
@@ -330,23 +315,22 @@ impl<'a> Tokenizer<'a> {
                                 len += 1;
                                 continue;
                             }
-                            Some(ch) if ch.is_alphabetic() => return Err(TokenizeError("token error invalid number".into())),
+                            Some(ch) if ch.is_alphabetic() => return Err(self.token_error("invalid number")),
                             _ => break
                         }
                     }
 
                 } else {
-                    return Err(TokenizeError("token error invalid number".into()))
+                    return Err(self.token_error("invalid number"))
                 }
                 
             },
-            Some(ch) if ch.is_alphabetic() => return Err(TokenizeError("token error invalid number".into())),
+            Some(ch) if ch.is_alphabetic() => return Err(self.token_error("invalid number")),
             _ => ()
         }
 
         Ok(Token::Literal(Literal::Number(s[..len].into())))
     }
-
 
     #[inline]
     fn tokenize_punct(&mut self, punct: Punct) -> Result<Token, TokenizeError> {
@@ -397,15 +381,20 @@ impl<'a> Tokenizer<'a> {
             }
         }
     }
+
+    #[inline]
+    fn token_error(&self, msg: &str) -> TokenizeError {
+        TokenizeError(format!("{} at line {}, column {}.", msg, self.location.line(), self.location.column()))
+    }
 }
 
 
 
 #[test]
 fn test() {
-    let tokenizer = Tokenizer::new("--fuck \n .12e+0+12");
-    // let mut tokenizer = Tokenizer::new("abcde");
+    let tokenizer = Tokenizer::new("--fuck \n 'fu我操' select * from student ");
     let xs = tokenizer.tokenize();
+  
     println!("{:?}", xs)
     // println!("{:?}", tokenizer.next_char());
     // println!("{:?}", tokenizer.next_char());
