@@ -4,11 +4,21 @@ use rtor::{
     Input,
     ParseResult,
     primitive::{
-        space
+        space,
+        digit,
+        noneof,
+        eof,
+        newline,
+        token
     },
     combine::{
-        skip_many
-    }, Parser, Error
+        skip_many,
+        skip_many1,
+        opt,
+        recognize,
+    },
+    Parser, 
+    Error
 };
 
 use super::{
@@ -123,7 +133,8 @@ pub enum Token {
     Keyword(Keyword),
     Ident(Ident),
     Punct(Punct),
-    Literal(Literal)
+    Literal(Literal),
+    Space,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -492,7 +503,7 @@ where
         Ok(tokens)
     }
 
-    fn next_token(&mut self) -> Option<Result<Token, TokenizeError>>{
+    fn next_token(&mut self) -> Option<Result<Token, TokenizeError>> {
         todo!()
     }
 
@@ -509,12 +520,19 @@ where I: Input<Token = char>
     let mut input = InputWithLocation::new(query);
 
     let mut location = input.location();
+    while let (Some(token), i) = next_token.map_err(|e| match e {
+        Error::Eoi => TokenizeError("eof".into()),
+        Error::Unexpected(c) => TokenizeError(format!("unexcept {}", c)),
+        Error::Custom(msg) => TokenizeError(msg)
+    }).parse(input)? {
 
-    while let (Some(token), i) = next_token.map_err(|_| TokenizeError("as".into())).parse(input)? {
-        tokens.push(TokenWithLocation {
-            token,
-            location,
-        });
+        if token != Token::Space {
+            tokens.push(TokenWithLocation {
+                token,
+                location,
+            });
+        }
+
         input = i;
         location = input.location();
     }
@@ -522,29 +540,73 @@ where I: Input<Token = char>
     Ok(tokens)
 }
 
-fn next_token<I>(input: I) -> ParseResult<Option<Token>, I> 
+fn next_token<I>(mut input: I) -> ParseResult<Option<Token>, I> 
 where I: Input<Token = char>
 {
-    loop {
-        let (_, mut i) = skip_many(space).parse(input)?;
-        match i.peek() {
-            Some(':') => {
-                i.next();
-                return Ok((Some(Token::Punct(Punct::Colon)), i))
-            },
-            Some(_) => unimplemented!(),
-            None => return Ok((None, i))
+    match input.peek() {
+        Some(':') => {  input.next(); return Ok((Some(Token::Punct(Punct::Colon)), input)) },
+        Some('-') => {
+            input.next();
+            match input.peek() {
+                Some('-') => {
+                    input.next();
+                    return skip_many(noneof("\n"))
+                        .andr(eof.or(newline.ignore())).map(|_| Some(Token::Space))
+                        .parse(input)
+                }
+                _ => return Ok((Some(Token::Punct(Punct::Minus)), input))
+            }
+        },
+        Some('/') => {
+            input.next();
+            match input.peek() {
+                Some('*') => {
+                    input.next();
+                    return skip_many(noneof("*"))
+                        .andr('*'.andr(token('/')))
+                        .map(|_| Some(Token::Space))
+                        .parse(input)
+                }
+                _ => return Ok((Some(Token::Punct(Punct::Slash)), input))
+            }
         }
+        Some('|') => {
+            input.next();
+            match input.peek() {
+                Some('|') => { input.next(); return Ok((Some(Token::Punct(Punct::StringConcat)), input)) },
+                _ => return Ok((Some(Token::Punct(Punct::Vertical)), input))
+            }
+        },
+        Some('.' | '0'..='9') => {
+            return number.parse(input)
+        },
+        Some(' ') => return skip_many1(space).map(|_| Some(Token::Space)).parse(input),
+        Some(_) => unimplemented!(),
+        None => return Ok((None, input))
     }
 }
 
+fn number<I>(input: I) -> ParseResult<Option<Token>, I> 
+where I: Input<Token = char>
+{
+    let fraction = '.'.andr(skip_many(digit));
+    let fraction1 = '.'.andr(skip_many1(digit));
+    let exponent = 'E'.or('e')
+        .andr(opt('+'.or('-')))
+        .andr(skip_many1(digit));
+    let number = skip_many1(digit)
+        .andr(opt(fraction))
+        .or(fraction1)
+        .andr(opt(exponent));
+    recognize(number).map(|i: I| Some(Token::Literal(Literal::Number(i.tokens().collect())))).parse(input)
+}
 
 
 #[test]
 fn test() {
     // let tokenizer = Tokenizer::new("--fuck \n 'fu我操' select * from student ");
     // let xs = tokenizer.tokenize();
-    let xs = tokenize(": : : ");
+    let xs = tokenize(".12e+2");
     println!("{:?}", xs)
     // println!("{:?}", tokenizer.next_char());
     // println!("{:?}", tokenizer.next_char());
