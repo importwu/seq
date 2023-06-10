@@ -7,7 +7,7 @@ use lazy_static::lazy_static;
 use rtor::{
     Parser,
     Input,
-    Error, primitive::eof,
+    Error,
 };
 
 use tokenizer::{
@@ -15,7 +15,10 @@ use tokenizer::{
     TokenWithLocation
 };
 
-use self::{select::{Select}, tokenizer::tokenize};
+use self::{
+    select::Select,
+    tokenizer::tokenize
+};
 
 #[derive(Debug)]
 pub struct ParseError(String);
@@ -34,16 +37,16 @@ fn data_type<I>(mut input: I) -> ParseResult<DataType, I>
 where I: Input<Token = TokenWithLocation>
 {
     match input.next() {
-        Some(TokenWithLocation {token: Token::Ident(Ident {value, quote: None}), location: _}) => {
+        Some(TokenWithLocation {token: Token::Ident(Ident {value, quote: None}), location}) => {
             match value.to_uppercase().as_str() {
                 "INT" | "INTEGER" => Ok((DataType::Integer, input)),
                 "FLOAT" => Ok((DataType::Float, input)),
                 "BOOL" | "BOOLEAN" => Ok((DataType::Boolean, input)),
                 "STRING" => Ok((DataType::String, input)),
-                _ => return Err(ParseError("invalid datatype".into())),
+                _ => return Err(ParseError(format!("{}, {}", location.line(), location.column()))),
             }   
         } 
-        Some(TokenWithLocation {token, location}) => return Err(ParseError("invalid datatype".into())), 
+        Some(TokenWithLocation { token, location }) => Err(ParseError(format!("{}, {}", location.line(), location.column()))),
         None => return Err(ParseError("end of input".into()))
     }
 }
@@ -52,13 +55,34 @@ where I: Input<Token = TokenWithLocation>
 pub enum Literal {
     Number(String),
     Boolean(bool),
-    String(String)
+    String(String),
+    Null
+}
+
+fn literal<I>(mut input: I) -> ParseResult<Literal, I>
+where I: Input<Token = TokenWithLocation>
+{
+    match input.next() {
+        Some(TokenWithLocation {token: Token::Literal(literal), location: _ }) => Ok((literal, input)),
+        Some(TokenWithLocation { token, location }) => Err(ParseError(format!("{}, {}", location.line(), location.column()))),
+        _ => Err(ParseError("end of input".into()))
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Ident {
     pub value: String,
     pub quote: Option<char>
+}
+
+fn ident<I>(mut input: I) -> ParseResult<Ident, I>
+where I: Input<Token = TokenWithLocation>
+{
+    match input.next() {
+        Some(TokenWithLocation {token: Token::Ident(ident), location: _ }) => Ok((ident, input)),
+        Some(TokenWithLocation { token, location }) => Err(ParseError(format!("{}, {}", location.line(), location.column()))),
+        _ => Err(ParseError("end of input".into()))
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -111,7 +135,8 @@ pub enum Keyword {
     Intersect,
     Except,
     Exists,
-    Offset
+    Offset,
+    In,
 }
 
 // impl fmt::Display for Keyword {
@@ -152,6 +177,22 @@ pub enum Keyword {
 //     }
 // }
 
+impl<I> Parser<I> for Keyword 
+where I: Input<Token = TokenWithLocation>
+{
+    type Output = ();
+    type Error = ParseError;
+    
+    fn parse(&mut self, mut input: I) -> Result<(Self::Output, I), Self::Error> {
+        match input.next() {
+            Some(TokenWithLocation {token: Token::Keyword(keyword), location: _ }) if *self == keyword => Ok(((), input)),
+            Some(TokenWithLocation { token, location }) => Err(ParseError(format!("{}, {}", location.line(), location.column()))),
+            None => Err(ParseError("end of input".into()))
+        }
+    }
+}
+
+
 #[derive(Debug, PartialEq, Eq, Copy, Clone)]
 pub enum Punct {
     Colon,               // :
@@ -178,6 +219,22 @@ pub enum Punct {
     Period,              // .
     LParen,              // (
     RParen,              // )
+}
+
+
+impl<I> Parser<I> for Punct 
+where I: Input<Token = TokenWithLocation>
+{
+    type Output = ();
+    type Error = ParseError;
+    
+    fn parse(&mut self, mut input: I) -> Result<(Self::Output, I), Self::Error> {
+        match input.next() {
+            Some(TokenWithLocation {token: Token::Punct(punct), location: _ }) if *self == punct => Ok(((), input)),
+            Some(TokenWithLocation { token, location }) => Err(ParseError(format!("{}, {}", location.line(), location.column()))),
+            None => Err(ParseError("end of input".into()))
+        }
+    }
 }
 
 lazy_static! {
@@ -227,63 +284,7 @@ lazy_static! {
         keywords.insert("EXCEPT", Keyword::Except);
         keywords.insert("EXISTS", Keyword::Exists);
         keywords.insert("OFFSET", Keyword::Offset);
+        keywords.insert("IN", Keyword::In);
         keywords
     };
 }
-
-impl<I> Parser<I> for Keyword 
-where I: Input<Token = TokenWithLocation>
-{
-    type Output = ();
-    type Error = ParseError;
-
-    fn parse(&mut self, mut input: I) -> Result<(Self::Output, I), Self::Error> {
-        match input.next() {
-            Some(TokenWithLocation {token: Token::Keyword(keyword), location: _ }) if *self == keyword => Ok(((), input)),
-            Some(TokenWithLocation { token, location }) => Err(ParseError(format!("{}, {}, {}", token, location.line(), location.column()))),
-            None => Err(ParseError("end of input".into()))
-        }
-    }
-}
-
-impl<I> Parser<I> for Punct 
-where I: Input<Token = TokenWithLocation>
-{
-    type Output = ();
-    type Error = ParseError;
-
-    fn parse(&mut self, mut input: I) -> Result<(Self::Output, I), Self::Error> {
-        match input.next() {
-            Some(TokenWithLocation {token: Token::Punct(punct), location: _ }) if *self == punct => Ok(((), input)),
-            Some(TokenWithLocation { token, location }) => Err(ParseError(format!("{}, {}, {}", token, location.line(), location.column()))),
-            None => Err(ParseError("end of input".into()))
-        }
-    }
-}
-
-fn ident<I>(mut input: I) -> ParseResult<Ident, I>
-where I: Input<Token = TokenWithLocation>
-{
-    match input.next() {
-        Some(TokenWithLocation {token: Token::Ident(ident), location: _ }) => Ok((ident, input)),
-        _ => Err(ParseError("end of input".into()))
-    }
-}
-
-fn literal<I>(mut input: I) -> ParseResult<Literal, I>
-where I: Input<Token = TokenWithLocation>
-{
-    match input.next() {
-        Some(TokenWithLocation {token: Token::Literal(literal), location: _ }) => Ok((literal, input)),
-        _ => Err(ParseError("end of input".into()))
-    }
-}
-
-// fn parse<I>(query: I) -> Result<Stmt, ParseError> 
-// where I: Input<Token = char>
-// {
-//     let tokens = tokenize(query).unwrap();
-//     stmt.parse(tokens.as_slice());
-   
-//     todo!()
-// }

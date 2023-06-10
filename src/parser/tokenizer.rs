@@ -247,10 +247,12 @@ where I: Input<Token = char>
         },
         Some(_) => {
             let (word, i) = word.parse(input)?;
-            match word.as_str() {
-                "false" => Ok((Some(Token::Literal(Literal::Boolean(false))), i)),
-                "true" => Ok((Some(Token::Literal(Literal::Boolean(true))), i)),
-                _ => match KEYWORDS.get(word.to_uppercase().as_str()) 
+            let word_uppercase = word.to_uppercase();
+            match word_uppercase.as_str() {
+                "FALSE" => Ok((Some(Token::Literal(Literal::Boolean(false))), i)),
+                "TRUE" => Ok((Some(Token::Literal(Literal::Boolean(true))), i)),
+                "NULL" => Ok((Some(Token::Literal(Literal::Null)), i)),
+                _ => match KEYWORDS.get(word_uppercase.as_str()) 
                 {
                     Some(&keyword) => Ok((Some(Token::Keyword(keyword)), i)),
                     _ => Ok((Some(Token::Ident(Ident { value: word, quote: None })), i))

@@ -12,24 +12,24 @@ use super::{expr::{Expr, expr}, Ident, ParseResult, tokenizer::TokenWithLocation
 
 #[derive(Debug, Clone)]
 pub struct Select {
-    compound: Compound,
-    order_by: Vec<OrderItem>,
-    limit: Option<Limit>
+    pub compound: Compound,
+    pub order_by: Vec<OrderItem>,
+    pub limit: Option<Limit>
 }
 
 
 #[derive(Debug, Clone)]
 pub struct Limit {
-    start: Expr,
-    offset: Option<Expr>
+    pub start: Expr,
+    pub offset: Option<Expr>
 }
 
 
 #[derive(Debug, Clone)]
 pub struct OrderItem {
-    expr: Expr,
-    asc: Option<bool>,
-    nulls_first: Option<bool>
+    pub expr: Expr,
+    pub asc: Option<bool>,
+    pub nulls_first: Option<bool>
 }
 
 
@@ -77,13 +77,12 @@ pub enum JoinConstraint {
     Using(Vec<Ident>)
 }
 
-//natural (left|right|full|inner) join if bool is true
 #[derive(Debug, Clone, Copy)]
 pub enum JoinOperator {
-    Left(bool),
-    Right(bool),
-    Full(bool),
-    Inner(bool),
+    LeftOuter { natural: bool },
+    RightOuter { natural: bool },
+    FullOuter { natural: bool },
+    Inner { natural: bool },
     Cross
 }
 
@@ -137,6 +136,7 @@ where I: Input<Token = TokenWithLocation>
         .and(opt(Keyword::Offset.or(Punct::Comma).andr(expr(0))))
         .map(|(start, offset)| Limit { start, offset })
         .parse(input)
+        
 }
 
 fn compound<I>(min: u8) -> impl Parser<I, Output = Compound, Error = ParseError> 
@@ -157,12 +157,7 @@ where I: Input<Token = TokenWithLocation>
 
         let (r#where, i) = opt(Keyword::Where.andr(expr(0))).parse(i)?;
 
-        let (group_by, i) = opt(
-             Keyword::Group
-            .andr(Keyword::By)
-            .andr(sepby1(expr(0), Punct::Comma))
-        )
-        .parse(i)?;
+        let (group_by, i) = opt(Keyword::Group.andr(Keyword::By).andr(sepby1(expr(0), Punct::Comma))).parse(i)?;
 
         let (having, mut input) = opt(Keyword::Having.andr(expr(0))).parse(i)?;
 
@@ -213,6 +208,11 @@ where I: Input<Token = TokenWithLocation>
             .and(opt(opt(Keyword::As).andr(ident)))
             .map(|(name, alias)| FromItem::Table { name, alias })
             .or(between(Punct::LParen, from_item(0), Punct::RParen))
+            .or(
+                between(Punct::LParen, stmt_select, Punct::RParen)
+                    .and(opt(opt(Keyword::As).andr(ident)))
+                    .map(|(query, alias)| FromItem::Subquery { query: Box::new(query), alias })
+            )
             .parse(input)?;
 
         loop {
@@ -241,14 +241,7 @@ fn join_constraint<I>(input: I) -> ParseResult<JoinConstraint, I>
 where I: Input<Token = TokenWithLocation>
 {
     Keyword::On.andr(expr(0)).map(JoinConstraint::On)
-        .or(Keyword::Using.andr(
-            between(
-                Punct::LParen,
-                sepby1(ident, Punct::Comma),
-                Punct::RParen
-            )
-        )
-        .map(JoinConstraint::Using))
+        .or(Keyword::Using.andr(between(Punct::LParen,sepby1(ident, Punct::Comma),Punct::RParen)).map(JoinConstraint::Using))
         .parse(input)
 }
 
@@ -259,12 +252,12 @@ where I: Input<Token = TokenWithLocation>
         .or(Keyword::Cross.andr(Keyword::Join).map(|_| JoinOperator::Cross))
         .or(|input: I| {
             let (natural, i) = opt(Keyword::Natural).map(|x| x.is_some()).parse(input)?;
-            Keyword::Left.map(|_| JoinOperator::Left(natural))
-                .or(Keyword::Right.map(|_| JoinOperator::Right(natural)))
-                .or(Keyword::Full.map(|_| JoinOperator::Full(natural)))
+            Keyword::Left.map(|_| JoinOperator::LeftOuter { natural })
+                .or(Keyword::Right.map(|_| JoinOperator::RightOuter { natural }))
+                .or(Keyword::Full.map(|_| JoinOperator::FullOuter { natural }))
                 .andl(opt(Keyword::Outer))
-                .or(Keyword::Inner.map(|_| JoinOperator::Inner(natural)))
-                .or(pure(JoinOperator::Inner(natural)))
+                .or(Keyword::Inner.map(|_| JoinOperator::Inner { natural }))
+                .or(pure(JoinOperator::Inner { natural }))
                 .andl(Keyword::Join)
                 .parse(i)
         })
@@ -284,7 +277,7 @@ where I: Input<Token = TokenWithLocation>
 
 #[test]
 fn test() {
-    let tokens = tokenize("select fuck.*").unwrap();
+    let tokens = tokenize("select * from (select 2), fuck").unwrap();
     println!("{:#?}", stmt_select.parse(tokens.as_slice()));
     // println!("{:#?}", tokens)
 }

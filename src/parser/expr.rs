@@ -176,7 +176,7 @@ where I: Input<Token = TokenWithLocation>
         Some(TokenWithLocation {token: Token::Punct(Punct::Slash), location: _}) => (BinaryOperator::Divide, 17, 18),
         Some(TokenWithLocation {token: Token::Punct(Punct::Percent), location: _}) => (BinaryOperator::Modulo, 17, 18),
         Some(TokenWithLocation {token: Token::Punct(Punct::StringConcat), location: _}) => (BinaryOperator::StringConcat, 19, 20),
-        Some(TokenWithLocation {token, location}) => return Err(ParseError("invalid binary op".into())),
+        Some(TokenWithLocation {token:_, location:_}) => return Err(ParseError("invalid binary op".into())),
         None => return Err(ParseError("end of input".into()))
     };
 
@@ -191,7 +191,7 @@ where I: Input<Token = TokenWithLocation>
         Some(TokenWithLocation {token: Token::Punct(Punct::Plus), location: _}) =>  (UnaryOperator::Plus, 23),
         Some(TokenWithLocation {token: Token::Punct(Punct::Minus), location: _}) =>  (UnaryOperator::Minus, 23),
         Some(TokenWithLocation {token: Token::Punct(Punct::Tilde), location: _}) =>  (UnaryOperator::BitwiseNot, 23),
-        Some(TokenWithLocation {token, location}) => return Err(ParseError("invalid unary op".into())),
+        Some(TokenWithLocation {token:_, location:_}) => return Err(ParseError("invalid unary op".into())),
         None => return Err(ParseError("end of input".into()))
     };
 
@@ -202,13 +202,9 @@ where I: Input<Token = TokenWithLocation>
 fn expr_tuple<I>(input: I) -> ParseResult<Expr, I>
 where I: Input<Token = TokenWithLocation>
 {
-    between(
-        Punct::LParen, 
-        sepby1(expr(0), Punct::Comma), 
-        Punct::RParen
-    )
-    .map(Expr::Tuple)
-    .parse(input)
+    between(Punct::LParen, sepby1(expr(0), Punct::Comma), Punct::RParen)
+        .map(Expr::Tuple)
+        .parse(input)
 }
 
 fn expr_unary<I>(input: I) -> ParseResult<Expr, I>
@@ -223,8 +219,8 @@ where I: Input<Token = TokenWithLocation>
 {
     let (operand, i) = Keyword::Case.andr(opt(expr(0).map(Box::new))).parse(input)?;
     
-    let (when, i) =  many1(
-Keyword::When
+    let (when, i) = many1(
+        Keyword::When
             .andr(expr(0))
             .and(Keyword::Then.andr(expr(0)))
             .map(|(condition, result)| WhenCause { condition, result })
@@ -265,29 +261,17 @@ where I: Input<Token = TokenWithLocation>
 
     let (distinct, i) = opt(Keyword::Distinct).parse(i)?;
     
-    let filter = |input: I| {
-        Keyword::Filter
-            .andr(between(
-                Punct::LParen,
-                Keyword::Where.andr(expr(0)),
-                Punct::RParen
-            ))
-            .parse(input)
-    };
-
+    let filter = Keyword::Filter
+        .andr(between(Punct::LParen, Keyword::Where.andr(expr(0)), Punct::RParen));
+            
     match distinct {
         Some(_) => {
             let (arg, i) = sepby1(expr(0), Punct::Comma)
                 .map(FunctionArg::List)
                 .parse(i)?;
             let (_, i) = Punct::RParen.parse(i)?;
-
             let (filter, i) = opt(filter).map(|o| o.map(Box::new)).parse(i)?;
-
-            let function_expr = Expr::Function(
-                Function::Aggregate { name, arg, distinct: true, filter }
-            );
-            Ok((function_expr, i))
+            Ok((Expr::Function(Function::Aggregate { name, arg, distinct: true, filter }), i))
         }
         None => {
             let (arg, i) = Punct::Star.map(|_| FunctionArg::Wildcard)
@@ -295,11 +279,10 @@ where I: Input<Token = TokenWithLocation>
                 .parse(i)?;
             let (_, i) = Punct::RParen.parse(i)?;
             let (filter, i) = opt(filter).map(|o| o.map(Box::new)).parse(i)?;
-            let function_expr = match filter {
-                Some(_) => Function::Aggregate { name, arg, distinct: false, filter },
-                None => Function::Simple { name, arg }
-            };
-            Ok((Expr::Function(function_expr), i))
+            match filter {
+                Some(_) => Ok((Expr::Function(Function::Aggregate { name, arg, distinct: false, filter }), i)),
+                None => Ok((Expr::Function(Function::Simple { name, arg }), i))
+            }
         }
     }
 }
@@ -308,17 +291,12 @@ fn expr_exists<I>(input: I) -> ParseResult<Expr, I>
 where I: Input<Token = TokenWithLocation>
 {
     let (not, i) =  opt(Keyword::Not).map(|x| x.is_some()).parse(input)?;
-    Keyword::Exists
-        .andr(between(
-            Punct::LParen,
-            stmt_select,
-            Punct::RParen
-        ))
+    Keyword::Exists.andr(between(Punct::LParen,stmt_select,Punct::RParen))
         .map(|query| Expr::Exists { not, subquery: Box::new(query) })
         .parse(i)
 }
 
-static mut between_and: bool = false;
+static mut PARSE_BETWEEN_EXPR: bool = false;
 
 //pratt parser
 pub fn expr<I>(min: u8) -> impl Parser<I, Output = Expr, Error = ParseError>
@@ -338,7 +316,7 @@ where I: Input<Token = TokenWithLocation>
 
         loop {
             if let Ok(((op, l, r), i)) = binary_op.parse(input.clone()) {
-                if op == BinaryOperator::And && unsafe { between_and } { break }
+                if op == BinaryOperator::And && unsafe { PARSE_BETWEEN_EXPR } { break }
 
                 if l < min { break }
 
@@ -357,7 +335,7 @@ where I: Input<Token = TokenWithLocation>
                 
                 if 7 < min { break }
 
-                let (not, i) =  opt(Keyword::Not).map(|x| x.is_some()).parse(i.clone())?;
+                let (not, i) =  opt(Keyword::Not).map(|x| x.is_some()).parse(i)?;
 
                 if let Ok((_, i)) = Keyword::Distinct
                     .andr(Keyword::From)
@@ -421,9 +399,10 @@ where I: Input<Token = TokenWithLocation>
             }
 
 
-            let (not, i) =  opt(Keyword::Not).map(|x| x.is_some()).parse(input.clone())?;
+            let (not, i) =  opt(Keyword::Not).map(|x| x.is_some()).parse(input)?;
+            input = i;
 
-            if let Ok((_, i)) = Keyword::Null.parse(i.clone()) {
+            if let Ok((_, i)) = Keyword::Null.parse(input.clone()) {
                 if 7 < min { break; }
                 lhs = Expr::IsNull {
                     not,
@@ -433,7 +412,7 @@ where I: Input<Token = TokenWithLocation>
                 continue;
             }
 
-            if let Ok((_, i)) = Keyword::Like.parse(i.clone()) {
+            if let Ok((_, i)) = Keyword::Like.parse(input.clone()) {
                 if 8 < min { break; }
 
                 let (pattern, i) = expr(7).parse(i)?;
@@ -453,12 +432,10 @@ where I: Input<Token = TokenWithLocation>
                 continue;
             }
 
-            if let Ok((_, i)) = Keyword::Between.parse(i.clone()) {
+            if let Ok((_, i)) = Keyword::Between.parse(input.clone()) {
                 if 8 < min { break; }
 
-                unsafe {
-                    between_and = true;
-                }
+                unsafe { PARSE_BETWEEN_EXPR = true }
 
                 let (lexpr, i) = expr(7).parse(i)?;
 
@@ -466,9 +443,7 @@ where I: Input<Token = TokenWithLocation>
 
                 let (rexpr, i) = expr(0).parse(i)?;
 
-                unsafe {
-                    between_and = false;
-                }
+                unsafe { PARSE_BETWEEN_EXPR = false }
 
                 lhs = Expr::Between { 
                     not, 
@@ -476,6 +451,34 @@ where I: Input<Token = TokenWithLocation>
                     left: Box::new(lexpr), 
                     right: Box::new(rexpr)
                 };
+                input = i;
+                continue;
+            }
+
+            if let Ok((_, i)) = Keyword::In.parse(input.clone()) {
+                let (_, i) = Punct::LParen.parse(i)?;
+
+                match stmt_select.parse(i.clone()) {
+                    Ok((select, i)) => {
+                        lhs = Expr::InSubquery { 
+                            not, 
+                            expr: Box::new(lhs), 
+                            subquery: Box::new(select)
+                        };
+                        input = i;
+                    }
+                    Err(_) => {
+                        let (list, i) = sepby(expr(0), Punct::Comma).parse(i)?;
+                        lhs = Expr::InList { 
+                            not, 
+                            expr: Box::new(lhs), 
+                            list
+                        };
+                        input = i;
+                    }
+                }
+                
+                let (_, i) = Punct::RParen.parse(input)?;
                 input = i;
                 continue;
             }
@@ -490,7 +493,7 @@ where I: Input<Token = TokenWithLocation>
 
 #[test]
 fn test() {
-    let tokens = tokenize("case 1 when 2 then 3 else 4 end").unwrap();
+    let tokens = tokenize("2 in (select 2 and 3 as f)").unwrap();//1 between 2 between 3 and 4 and 6 between 7 and 8
     println!("{:#?}", expr(0).parse(tokens.as_slice()));
     // println!("{:#?}", tokens)
 }
