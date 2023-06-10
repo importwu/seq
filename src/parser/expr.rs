@@ -14,7 +14,7 @@ use rtor::{
 
 use crate::parser::tokenizer::tokenize;
 
-use super::{Literal, Ident, DataType, tokenizer::{TokenWithLocation, Token}, Keyword, Punct, ParseError, literal, ident, ParseResult, data_type, stmt::{Select, stmt_select}};
+use super::{Literal, Ident, DataType, tokenizer::{TokenWithLocation, Token}, Keyword, Punct, ParseError, literal, ident, ParseResult, data_type, select::{Select, stmt_select}};
 
 // #[derive(Debug)]
 // pub enum Literal {
@@ -218,12 +218,6 @@ where I: Input<Token = TokenWithLocation>
     expr(l).map(|e| Expr::UnaryOp { op, expr: Box::new(e) }).parse(i)
 }
 
-fn expr_literal<I>(input: I) -> ParseResult<Expr, I>
-where I: Input<Token = TokenWithLocation>
-{
-    literal.map(Expr::Literal).parse(input)
-}
-
 fn expr_case<I>(input: I) -> ParseResult<Expr, I>
 where I: Input<Token = TokenWithLocation>
 {
@@ -332,12 +326,12 @@ where I: Input<Token = TokenWithLocation>
 {
     move |input: I| {
 
-        let (mut lhs, mut input) = expr_literal
+        let (mut lhs, mut input) = literal.map(Expr::Literal)
             .or(expr_unary)
             .or(expr_tuple)
             .or(expr_case)
             .or(expr_cast)
-            // .or(expr_exists)
+            .or(expr_exists)
             .or(expr_function)
             .or(expr_column)
             .parse(input)?;

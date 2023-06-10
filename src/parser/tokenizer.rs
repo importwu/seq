@@ -250,11 +250,10 @@ where I: Input<Token = char>
             match word.as_str() {
                 "false" => Ok((Some(Token::Literal(Literal::Boolean(false))), i)),
                 "true" => Ok((Some(Token::Literal(Literal::Boolean(true))), i)),
-                _ => {
-                    match KEYWORDS.get(word.to_uppercase().as_str()) {
-                        Some(&keyword) => Ok((Some(Token::Keyword(keyword)), i)),
-                        _ => Ok((Some(Token::Ident(Ident { value: word, quote: None })), i))
-                    }
+                _ => match KEYWORDS.get(word.to_uppercase().as_str()) 
+                {
+                    Some(&keyword) => Ok((Some(Token::Keyword(keyword)), i)),
+                    _ => Ok((Some(Token::Ident(Ident { value: word, quote: None })), i))
                 }
             }
         },
@@ -281,9 +280,9 @@ fn word<I>(input: I) -> ParseResult<String, I>
 where I: Input<Token = char>
 {
     recognize(
-unicode::alpha
-            .or('_')
-            .andr(skip_many(unicode::alpha.or('_').or('$').or(digit)))
+        unicode::alpha
+        .or('_')
+        .andr(skip_many(unicode::alpha.or('_').or('$').or(digit)))
     )
     .map(|i: I| i.tokens().collect())
     .parse(input)

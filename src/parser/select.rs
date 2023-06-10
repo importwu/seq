@@ -1,18 +1,18 @@
-use rtor::{Input, combine::{opt, between, sepby1}, Parser, primitive::pure};
+use rtor::{
+    Input, 
+    Parser, 
+    primitive::pure,
+    combine::{opt, between, sepby1}, 
+};
 
 use crate::parser::tokenizer::tokenize;
 
 use super::{expr::{Expr, expr}, Ident, ParseResult, tokenizer::TokenWithLocation, Keyword, ident, Punct, ParseError};
 
 
-pub enum Stmt {
-    Select(Select)
-}
-
-
 #[derive(Debug, Clone)]
 pub struct Select {
-    body: SelectBody,
+    compound: Compound,
     order_by: Vec<OrderItem>,
     limit: Option<Limit>
 }
@@ -20,7 +20,7 @@ pub struct Select {
 
 #[derive(Debug, Clone)]
 pub struct Limit {
-    expr: Expr,
+    start: Expr,
     offset: Option<Expr>
 }
 
@@ -34,7 +34,7 @@ pub struct OrderItem {
 
 
 #[derive(Debug, Clone)]
-pub enum SelectBody {
+pub enum Compound {
     Simple {
         distinct: bool,
         select: Vec<SelectItem>,
@@ -43,10 +43,10 @@ pub enum SelectBody {
         group_by: Vec<Expr>,
         having: Option<Expr>
     },
-    Compound {
-        op: CompoundOperator,
-        left: Box<SelectBody>,
-        right: Box<SelectBody>
+    Set {
+        op: SetOperator,
+        left: Box<Compound>,
+        right: Box<Compound>
     }
 }
 
@@ -77,16 +77,13 @@ pub enum JoinConstraint {
     Using(Vec<Ident>)
 }
 
+//natural (left|right|full|inner) join if bool is true
 #[derive(Debug, Clone, Copy)]
 pub enum JoinOperator {
-    Left,
-    Right,
-    Full,
-    Inner,
-    NaturalLeft,
-    NaturalRight,
-    NaturalFull,
-    NaturalInner,
+    Left(bool),
+    Right(bool),
+    Full(bool),
+    Inner(bool),
     Cross
 }
 
@@ -102,7 +99,7 @@ pub enum SelectItem {
 }
 
 #[derive(Debug, Clone, Copy)]
-pub enum CompoundOperator {
+pub enum SetOperator {
     Union,
     UnionAll,
     Intersect,
@@ -110,21 +107,14 @@ pub enum CompoundOperator {
 }
 
 
-pub fn stmt<I>(input: I) -> ParseResult<Stmt, I> 
-where I: Input<Token = TokenWithLocation>
-{
-    todo!()
-}
-
-
 pub fn stmt_select<I>(input: I) -> ParseResult<Select, I> 
 where I: Input<Token = TokenWithLocation>
 {
-    let (body, i) = select_body(0).parse(input)?;
+    let (compound, i) = compound(0).parse(input)?;
     let (order_by, i) = opt(order_by).parse(i)?;
     let (limit, i) = opt(limit).parse(i)?;
 
-    Ok((Select {body, order_by: order_by.unwrap_or(vec![]), limit }, i))
+    Ok((Select {compound, order_by: order_by.unwrap_or(vec![]), limit }, i))
 }
 
 fn order_by<I>(input: I) -> ParseResult<Vec<OrderItem>, I> 
@@ -144,12 +134,12 @@ fn limit<I>(input: I) -> ParseResult<Limit, I>
 where I: Input<Token = TokenWithLocation>
 {
     Keyword::Limit.andr(expr(0))
-        .and(opt(Keyword::Offset.andr(expr(0)).or(Punct::Comma.andr(expr(0))) ))
-        .map(|(expr, offset)| Limit { expr, offset })
+        .and(opt(Keyword::Offset.or(Punct::Comma).andr(expr(0))))
+        .map(|(start, offset)| Limit { start, offset })
         .parse(input)
 }
 
-fn select_body<I>(min: u8) -> impl Parser<I, Output = SelectBody, Error = ParseError> 
+fn compound<I>(min: u8) -> impl Parser<I, Output = Compound, Error = ParseError> 
 where I: Input<Token = TokenWithLocation>
 {
     move |input: I| {
@@ -176,7 +166,7 @@ where I: Input<Token = TokenWithLocation>
 
         let (having, mut input) = opt(Keyword::Having.andr(expr(0))).parse(i)?;
 
-        let mut left = SelectBody::Simple { 
+        let mut left = Compound::Simple { 
             distinct, 
             select, 
             from, 
@@ -186,10 +176,10 @@ where I: Input<Token = TokenWithLocation>
         };
 
         loop {
-            if let Ok((op, i)) = compound_op.parse(input.clone()) {
+            if let Ok((op, i)) = set_op.parse(input.clone()) {
                 if 1 < min { break; }
-                let (right, i) = select_body(2).parse(i)?;
-                left = SelectBody::Compound { 
+                let (right, i) = compound(2).parse(i)?;
+                left = Compound::Set { 
                     op, 
                     left: Box::new(left), 
                     right: Box::new(right)
@@ -204,13 +194,13 @@ where I: Input<Token = TokenWithLocation>
     }
 }
 
-fn compound_op<I>(input: I) -> ParseResult<CompoundOperator, I> 
+fn set_op<I>(input: I) -> ParseResult<SetOperator, I> 
 where I: Input<Token = TokenWithLocation>
 {
-    Keyword::Union.map(|_| CompoundOperator::Union)
-        .or(Keyword::Union.andr(Keyword::All).map(|_| CompoundOperator::UnionAll))
-        .or(Keyword::Intersect.map(|_| CompoundOperator::Intersect))
-        .or(Keyword::Except.map(|_| CompoundOperator::Except))
+    Keyword::Union.andr(Keyword::All).map(|_| SetOperator::UnionAll)
+        .or(Keyword::Union.map(|_| SetOperator::Union))
+        .or(Keyword::Intersect.map(|_| SetOperator::Intersect))
+        .or(Keyword::Except.map(|_| SetOperator::Except))
         .parse(input)
 }
 
@@ -268,25 +258,15 @@ where I: Input<Token = TokenWithLocation>
     Punct::Comma.map(|_| JoinOperator::Cross)
         .or(Keyword::Cross.andr(Keyword::Join).map(|_| JoinOperator::Cross))
         .or(|input: I| {
-            let (natural, i) = opt(Keyword::Natural).parse(input)?;
-            match natural {
-                None => Keyword::Left.map(|_| JoinOperator::Left)
-                    .or(Keyword::Right.map(|_| JoinOperator::Right))
-                    .or(Keyword::Full.map(|_| JoinOperator::Full))
-                    .andl(opt(Keyword::Outer))
-                    .or(Keyword::Inner.map(|_| JoinOperator::Inner))
-                    .or(pure(JoinOperator::Inner))
-                    .andl(Keyword::Join)
-                    .parse(i),
-                Some(_) => Keyword::Left.map(|_| JoinOperator::NaturalLeft)
-                    .or(Keyword::Right.map(|_| JoinOperator::NaturalRight))
-                    .or(Keyword::Full.map(|_| JoinOperator::NaturalFull))
-                    .andl(opt(Keyword::Outer))
-                    .or(Keyword::Inner.map(|_| JoinOperator::NaturalInner))
-                    .or(pure(JoinOperator::NaturalInner))
-                    .andl(Keyword::Join)
-                    .parse(i),
-            }
+            let (natural, i) = opt(Keyword::Natural).map(|x| x.is_some()).parse(input)?;
+            Keyword::Left.map(|_| JoinOperator::Left(natural))
+                .or(Keyword::Right.map(|_| JoinOperator::Right(natural)))
+                .or(Keyword::Full.map(|_| JoinOperator::Full(natural)))
+                .andl(opt(Keyword::Outer))
+                .or(Keyword::Inner.map(|_| JoinOperator::Inner(natural)))
+                .or(pure(JoinOperator::Inner(natural)))
+                .andl(Keyword::Join)
+                .parse(i)
         })
         .parse(input)
 }
@@ -304,7 +284,7 @@ where I: Input<Token = TokenWithLocation>
 
 #[test]
 fn test() {
-    let tokens = tokenize("select * from student where age > 20 group by name order by year limit 2 offset 3").unwrap();
+    let tokens = tokenize("select fuck.*").unwrap();
     println!("{:#?}", stmt_select.parse(tokens.as_slice()));
     // println!("{:#?}", tokens)
 }

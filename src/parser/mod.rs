@@ -1,6 +1,6 @@
 mod tokenizer;
 mod expr;
-mod stmt;
+mod select;
 
 use std::{collections::HashMap};
 use lazy_static::lazy_static;
@@ -15,7 +15,7 @@ use tokenizer::{
     TokenWithLocation
 };
 
-use self::{stmt::{Stmt, stmt}, tokenizer::tokenize};
+use self::{select::{Select}, tokenizer::tokenize};
 
 #[derive(Debug)]
 pub struct ParseError(String);
@@ -240,7 +240,7 @@ where I: Input<Token = TokenWithLocation>
     fn parse(&mut self, mut input: I) -> Result<(Self::Output, I), Self::Error> {
         match input.next() {
             Some(TokenWithLocation {token: Token::Keyword(keyword), location: _ }) if *self == keyword => Ok(((), input)),
-            Some(x) => Err(ParseError("expected keyword".into())),
+            Some(TokenWithLocation { token, location }) => Err(ParseError(format!("{}, {}, {}", token, location.line(), location.column()))),
             None => Err(ParseError("end of input".into()))
         }
     }
@@ -255,7 +255,7 @@ where I: Input<Token = TokenWithLocation>
     fn parse(&mut self, mut input: I) -> Result<(Self::Output, I), Self::Error> {
         match input.next() {
             Some(TokenWithLocation {token: Token::Punct(punct), location: _ }) if *self == punct => Ok(((), input)),
-            Some(x) => Err(ParseError("expected punct".into())),
+            Some(TokenWithLocation { token, location }) => Err(ParseError(format!("{}, {}, {}", token, location.line(), location.column()))),
             None => Err(ParseError("end of input".into()))
         }
     }
@@ -279,11 +279,11 @@ where I: Input<Token = TokenWithLocation>
     }
 }
 
-fn parse<I>(query: I) -> Result<Stmt, ParseError> 
-where I: Input<Token = char>
-{
-    let tokens = tokenize(query).unwrap();
-    stmt.parse(tokens.as_slice());
+// fn parse<I>(query: I) -> Result<Stmt, ParseError> 
+// where I: Input<Token = char>
+// {
+//     let tokens = tokenize(query).unwrap();
+//     stmt.parse(tokens.as_slice());
    
-    todo!()
-}
+//     todo!()
+// }
