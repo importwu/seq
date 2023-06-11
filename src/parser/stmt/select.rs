@@ -9,10 +9,10 @@ use crate::parser::tokenizer::tokenize;
 
 use super::super::ast::{
     Expr,
-    Select,
+    Query,
     Limit,
     OrderItem,
-    Compound,
+    Select,
     FromItem,
     JoinConstraint,
     JoinOperator,
@@ -36,14 +36,14 @@ use super::super::{
 };
 
 
-pub fn select<I>(input: I) -> ParseResult<Select, I> 
+pub fn select<I>(input: I) -> ParseResult<Query, I> 
 where I: Input<Token = TokenWithLocation>
 {
-    let (compound, i) = compound(0).parse(input)?;
+    let (body, i) = core(0).parse(input)?;
     let (order_by, i) = opt(order_by).parse(i)?;
     let (limit, i) = opt(limit).parse(i)?;
 
-    Ok((Select {body: compound, order_by: order_by.unwrap_or(vec![]), limit }, i))
+    Ok((Query {body, order_by: order_by.unwrap_or(vec![]), limit }, i))
 }
 
 fn order_by<I>(input: I) -> ParseResult<Vec<OrderItem>, I> 
@@ -69,7 +69,7 @@ where I: Input<Token = TokenWithLocation>
         
 }
 
-fn compound<I>(min: u8) -> impl Parser<I, Output = Compound, Error = ParseError> 
+fn core<I>(min: u8) -> impl Parser<I, Output = Select, Error = ParseError> 
 where I: Input<Token = TokenWithLocation>
 {
     move |input: I| {
@@ -91,7 +91,7 @@ where I: Input<Token = TokenWithLocation>
 
         let (having, mut input) = opt(Keyword::Having.andr(expr(0))).parse(i)?;
 
-        let mut left = Compound::Simple { 
+        let mut left = Select::Select { 
             distinct, 
             result, 
             from, 
@@ -103,8 +103,8 @@ where I: Input<Token = TokenWithLocation>
         loop {
             if let Ok((op, i)) = set_op.parse(input.clone()) {
                 if 1 < min { break; }
-                let (right, i) = compound(2).parse(i)?;
-                left = Compound::Set { 
+                let (right, i) = core(2).parse(i)?;
+                left = Select::Compound { 
                     op, 
                     left: Box::new(left), 
                     right: Box::new(right)

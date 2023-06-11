@@ -98,13 +98,13 @@ pub enum Expr {
     InSubquery {
         not: bool,
         expr: Box<Expr>,
-        subquery: Box<Select>
+        subquery: Box<Query>
     },
     Exists {
         not: bool,
-        subquery: Box<Select>
+        subquery: Box<Query>
     },
-    Subquery(Box<Select>),
+    Subquery(Box<Query>),
     Column {
         table: Option<Ident>,
         column: Ident
@@ -152,8 +152,8 @@ pub enum FunctionArg {
 }
 
 #[derive(Debug, Clone)]
-pub struct Select {
-    pub body: Compound,
+pub struct Query {
+    pub body: Select,
     pub order_by: Vec<OrderItem>,
     pub limit: Option<Limit>
 }
@@ -175,8 +175,8 @@ pub struct OrderItem {
 
 
 #[derive(Debug, Clone)]
-pub enum Compound {
-    Simple {
+pub enum Select {
+    Select {
         distinct: bool,
         result: Vec<ResultItem>,
         from: Option<FromItem>,
@@ -184,10 +184,11 @@ pub enum Compound {
         group_by: Vec<Expr>,
         having: Option<Expr>
     },
-    Set {
+    Values(Vec<Vec<Expr>>),
+    Compound {
         op: SetOperator,
-        left: Box<Compound>,
-        right: Box<Compound>
+        left: Box<Select>,
+        right: Box<Select>
     }
 }
 
@@ -199,7 +200,7 @@ pub enum FromItem {
         alias: Option<Ident>
     },
     Subquery {
-        query: Box<Select>,
+        query: Box<Query>,
         alias: Option<Ident>
     },
     Join {
@@ -242,4 +243,13 @@ pub enum SetOperator {
     UnionAll,
     Intersect,
     Except
+}
+
+pub enum Stmt {
+    Select(Query),
+    Insert {
+        table_name: Ident,
+        columns: Vec<Ident>,
+        source: Box<Query>
+    }
 }

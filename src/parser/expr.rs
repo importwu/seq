@@ -23,7 +23,7 @@ use super::{
         Literal,
         Ident,
         DataType,
-        Select
+        Query
     },
     tokenizer::{
          TokenWithLocation, 
@@ -377,7 +377,7 @@ where I: Input<Token = TokenWithLocation>
 
 #[test]
 fn test() {
-    let tokens = tokenize("2 in (select 2 and 3 as f)").unwrap();//1 between 2 between 3 and 4 and 6 between 7 and 8
+    let tokens = tokenize("2 in (select 2 and 3 as f)").unwrap();
     println!("{:#?}", expr(0).parse(tokens.as_slice()));
     // println!("{:#?}", tokens)
 }
