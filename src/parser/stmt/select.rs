@@ -36,7 +36,7 @@ use super::super::{
 };
 
 
-pub fn stmt_select<I>(input: I) -> ParseResult<Select, I> 
+pub fn select<I>(input: I) -> ParseResult<Select, I> 
 where I: Input<Token = TokenWithLocation>
 {
     let (compound, i) = compound(0).parse(input)?;
@@ -139,7 +139,7 @@ where I: Input<Token = TokenWithLocation>
             .map(|(name, alias)| FromItem::Table { name, alias })
             .or(between(Punct::LParen, from_item(0), Punct::RParen))
             .or(
-                between(Punct::LParen, stmt_select, Punct::RParen)
+                between(Punct::LParen, select, Punct::RParen)
                     .and(opt(opt(Keyword::As).andr(ident)))
                     .map(|(query, alias)| FromItem::Subquery { query: Box::new(query), alias })
             )
@@ -208,6 +208,6 @@ where I: Input<Token = TokenWithLocation>
 #[test]
 fn test() {
     let tokens = tokenize("select 1 intersect select 2").unwrap();
-    println!("{:#?}", stmt_select.parse(tokens.as_slice()));
+    println!("{:#?}", select.parse(tokens.as_slice()));
     // println!("{:#?}", tokens)
 }

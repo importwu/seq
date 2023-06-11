@@ -37,7 +37,7 @@ use super::{
     ident,
     ParseResult,
     data_type,
-    stmt::select::stmt_select
+    stmt::select::select
 };
 
 fn binary_op<I>(mut input: I) -> ParseResult<(BinaryOperator, u8, u8), I> 
@@ -175,7 +175,7 @@ fn expr_exists<I>(input: I) -> ParseResult<Expr, I>
 where I: Input<Token = TokenWithLocation>
 {
     let (not, i) =  opt(Keyword::Not).map(|x| x.is_some()).parse(input)?;
-    Keyword::Exists.andr(between(Punct::LParen,stmt_select,Punct::RParen))
+    Keyword::Exists.andr(between(Punct::LParen,select,Punct::RParen))
         .map(|query| Expr::Exists { not, subquery: Box::new(query) })
         .parse(i)
 }
@@ -342,7 +342,7 @@ where I: Input<Token = TokenWithLocation>
             if let Ok((_, i)) = Keyword::In.parse(input.clone()) {
                 let (_, i) = Punct::LParen.parse(i)?;
 
-                match stmt_select.parse(i.clone()) {
+                match select.parse(i.clone()) {
                     Ok((select, i)) => {
                         lhs = Expr::InSubquery { 
                             not, 
