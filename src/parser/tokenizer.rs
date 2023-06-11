@@ -23,12 +23,31 @@ use rtor::{
 };
 
 use super::{
-    Keyword,
-    Ident,
-    Punct,
-    Literal,
-    KEYWORDS,
+    keyword::{
+        Keyword,
+        KEYWORDS
+    },
+    punct::Punct,
+    ast:: {
+        Ident,
+        Literal
+    }
 };
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Token {
+    Keyword(Keyword),
+    Ident(Ident),
+    Punct(Punct),
+    Literal(Literal),
+    Space,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TokenWithLocation {
+    pub token: Token,
+    pub location: Location,
+}
 
 #[derive(Debug)]
 pub struct TokenizeError(String);
@@ -113,23 +132,6 @@ where
         self.inner.tokens()
     }
 }
-
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Token {
-    Keyword(Keyword),
-    Ident(Ident),
-    Punct(Punct),
-    Literal(Literal),
-    Space,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TokenWithLocation {
-    pub token: Token,
-    pub location: Location,
-}
-
 
 pub fn tokenize<I>(query: I) ->  Result<Vec<TokenWithLocation>, TokenizeError> 
 where I: Input<Token = char>
@@ -243,7 +245,6 @@ where I: Input<Token = char>
             token(word).andl(token(end_quote))
                 .map(|value| Some(Token::Ident(Ident { value, quote: Some(start_quote) })))
                 .parse(input)
-
         },
         Some(_) => {
             let (word, i) = word.parse(input)?;
@@ -293,7 +294,7 @@ where I: Input<Token = char>
 
 #[test]
 fn test() {
-    let xs = tokenize("--fuck \n 'fu我操' select * from student ");
+    let xs = tokenize("--fuck \n select * from fuck ");
     println!("{:?}", xs)
 
 }

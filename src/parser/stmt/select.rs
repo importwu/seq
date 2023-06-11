@@ -7,103 +7,33 @@ use rtor::{
 
 use crate::parser::tokenizer::tokenize;
 
-use super::{expr::{Expr, expr}, Ident, ParseResult, tokenizer::TokenWithLocation, Keyword, ident, Punct, ParseError};
+use super::super::ast::{
+    Expr,
+    Select,
+    Limit,
+    OrderItem,
+    Compound,
+    FromItem,
+    JoinConstraint,
+    JoinOperator,
+    ResultItem,
+    SetOperator,
+    Ident
+};
 
+use super::super::tokenizer::{
+    TokenWithLocation,
+    Token
+};
 
-#[derive(Debug, Clone)]
-pub struct Select {
-    pub compound: Compound,
-    pub order_by: Vec<OrderItem>,
-    pub limit: Option<Limit>
-}
-
-
-#[derive(Debug, Clone)]
-pub struct Limit {
-    pub start: Expr,
-    pub offset: Option<Expr>
-}
-
-
-#[derive(Debug, Clone)]
-pub struct OrderItem {
-    pub expr: Expr,
-    pub asc: Option<bool>,
-    pub nulls_first: Option<bool>
-}
-
-
-#[derive(Debug, Clone)]
-pub enum Compound {
-    Simple {
-        distinct: bool,
-        select: Vec<SelectItem>,
-        from: Option<FromItem>,
-        r#where: Option<Expr>,
-        group_by: Vec<Expr>,
-        having: Option<Expr>
-    },
-    Set {
-        op: SetOperator,
-        left: Box<Compound>,
-        right: Box<Compound>
-    }
-}
-
-
-#[derive(Debug, Clone)]
-pub enum FromItem {
-    Table {
-        name: Ident,
-        alias: Option<Ident>
-    },
-    Subquery {
-        query: Box<Select>,
-        alias: Option<Ident>
-    },
-    Join {
-        op: JoinOperator,
-        left: Box<FromItem>,
-        right: Box<FromItem>,
-        constraint: Option<JoinConstraint>
-    }
-}
-
-
-
-#[derive(Debug, Clone)]
-pub enum JoinConstraint {
-    On(Expr),
-    Using(Vec<Ident>)
-}
-
-#[derive(Debug, Clone, Copy)]
-pub enum JoinOperator {
-    LeftOuter { natural: bool },
-    RightOuter { natural: bool },
-    FullOuter { natural: bool },
-    Inner { natural: bool },
-    Cross
-}
-
-
-#[derive(Debug, Clone)]
-pub enum SelectItem {
-    Expr {
-        expr: Expr,
-        alias: Option<Ident>
-    },
-    Wildcard,
-    TableWildcard(Ident)
-}
-
-#[derive(Debug, Clone, Copy)]
-pub enum SetOperator {
-    Union,
-    UnionAll,
-    Intersect,
-    Except
-}
+use super::super::{
+    keyword::Keyword,
+    ident,
+    punct::Punct,
+    ParseError,
+    ParseResult,
+    expr::expr,
+};
 
 
 pub fn stmt_select<I>(input: I) -> ParseResult<Select, I> 
@@ -113,7 +43,7 @@ where I: Input<Token = TokenWithLocation>
     let (order_by, i) = opt(order_by).parse(i)?;
     let (limit, i) = opt(limit).parse(i)?;
 
-    Ok((Select {compound, order_by: order_by.unwrap_or(vec![]), limit }, i))
+    Ok((Select {body: compound, order_by: order_by.unwrap_or(vec![]), limit }, i))
 }
 
 fn order_by<I>(input: I) -> ParseResult<Vec<OrderItem>, I> 
@@ -151,7 +81,7 @@ where I: Input<Token = TokenWithLocation>
             .parse(i)?;
 
 
-        let (select, i) = sepby1(select_item, Punct::Comma).parse(i)?;
+        let (result, i) = sepby1(result_item, Punct::Comma).parse(i)?;
 
         let (from, i) = opt(Keyword::From.andr(from_item(0))).parse(i)?;
 
@@ -163,7 +93,7 @@ where I: Input<Token = TokenWithLocation>
 
         let mut left = Compound::Simple { 
             distinct, 
-            select, 
+            result, 
             from, 
             r#where, 
             group_by: group_by.unwrap_or(vec![]), 
@@ -264,20 +194,20 @@ where I: Input<Token = TokenWithLocation>
         .parse(input)
 }
 
-fn select_item<I>(input: I) -> ParseResult<SelectItem, I> 
+fn result_item<I>(input: I) -> ParseResult<ResultItem, I> 
 where I: Input<Token = TokenWithLocation>
 {
     expr(0)
         .and(opt(opt(Keyword::As).andr(ident)))
-        .map(|(expr, alias)| SelectItem::Expr { expr, alias })
-        .or(Punct::Star.map(|_| SelectItem::Wildcard))
-        .or(ident.andl(Punct::Period).andl(Punct::Star).map(SelectItem::TableWildcard))
+        .map(|(expr, alias)| ResultItem::Expr { expr, alias })
+        .or(Punct::Star.map(|_| ResultItem::Wildcard))
+        .or(ident.andl(Punct::Period).andl(Punct::Star).map(ResultItem::TableWildcard))
         .parse(input)
 }
 
 #[test]
 fn test() {
-    let tokens = tokenize("select * from (select 2), fuck").unwrap();
+    let tokens = tokenize("select 1 intersect select 2").unwrap();
     println!("{:#?}", stmt_select.parse(tokens.as_slice()));
     // println!("{:#?}", tokens)
 }
