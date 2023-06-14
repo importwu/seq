@@ -22,70 +22,23 @@ use rtor::{
     ParseError
 };
 
-use super::{
-    keyword::{
-        Keyword,
-        KEYWORDS
-    },
-    punct::Punct,
-    ast:: {
-        Ident,
-        Literal
-    }
+
+use super::token::{
+    Location,
+    Token,
+    TokenWithLocation,
+    Punct,
+    Ident,
+    Literal,
+    KEYWORDS
 };
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Token {
-    Keyword(Keyword),
-    Ident(Ident),
-    Punct(Punct),
-    Literal(Literal),
-    Space,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TokenWithLocation {
-    pub token: Token,
-    pub location: Location,
-}
 
 #[derive(Debug)]
 pub struct TokenizeError(String);
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Location {
-    line: u64,
-    column: u64,
-}
-
-impl Location {
-    pub fn new() -> Self {
-        Self {
-            line: 1,
-            column: 1,
-        }
-    }
-
-    pub fn move_by_char(&mut self, ch: char) {
-        if ch == '\n' {
-            self.line += 1;
-            self.column = 1;
-        }else {
-            self.column += 1;
-        }
-    }
-
-    pub fn line(&self) -> u64 {
-        self.line
-    }
-
-    pub fn column(&self) -> u64 {
-        self.column
-    }
-}
-
 #[derive(Debug, Clone)]
-pub struct InputWithLocation<I> {
+struct InputWithLocation<I> {
     inner: I,
     location: Location
 }
