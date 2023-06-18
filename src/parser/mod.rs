@@ -4,6 +4,7 @@ mod ddl;
 mod dml;
 mod token;
 mod data_type;
+mod query;
 
 use rtor::{
     Parser,
@@ -28,14 +29,14 @@ use expr::{
     WhenCause
 };
 
-use dml::{
+use query::{
     OrderItem,
     SetOperator,
-    Select,
+    QueryCore,
     Limit,
     Query,
     FromItem,
-    ResultItem,
+    SelectItem,
     JoinConstraint,
     JoinOperator,
     Table
@@ -52,6 +53,44 @@ pub struct ParseError(String);
 type ParseResult<T, I> = Result<(T, I), ParseError>;
 
 
+fn data_type<I>(mut input: I) -> ParseResult<DataType, I> 
+where I: Input<Token = TokenWithLocation>
+{
+    match input.next() {
+        Some(TokenWithLocation {token: Token::Ident(Ident {value, quote: None}), location}) => {
+            match value.to_uppercase().as_str() {
+                "INT" | "INTEGER" => Ok((DataType::Integer, input)),
+                "FLOAT" => Ok((DataType::Float, input)),
+                "BOOL" | "BOOLEAN" => Ok((DataType::Boolean, input)),
+                "STRING" => Ok((DataType::String, input)),
+                _ => return Err(ParseError(format!("{}, {}", location.line(), location.column()))),
+            }   
+        } 
+        Some(TokenWithLocation { token, location }) => Err(ParseError(format!("{}, {}", location.line(), location.column()))),
+        None => return Err(ParseError("end of input".into()))
+    }
+}
+
+
+fn literal<I>(mut input: I) -> ParseResult<Literal, I>
+where I: Input<Token = TokenWithLocation>
+{
+    match input.next() {
+        Some(TokenWithLocation { token: Token::Literal(literal), location: _ }) => Ok((literal, input)),
+        Some(TokenWithLocation { token, location }) => Err(ParseError(format!("{}, {}", location.line(), location.column()))),
+        _ => Err(ParseError("end of input".into()))
+    }
+}
+
+fn ident<I>(mut input: I) -> ParseResult<Ident, I>
+where I: Input<Token = TokenWithLocation>
+{
+    match input.next() {
+        Some(TokenWithLocation { token: Token::Ident(ident), location: _ }) => Ok((ident, input)),
+        Some(TokenWithLocation { token, location }) => Err(ParseError(format!("{}, {}", location.line(), location.column()))),
+        _ => Err(ParseError("end of input".into()))
+    }
+}
 
 impl<I> Parser<I> for Punct 
 where I: Input<Token = TokenWithLocation>
@@ -114,18 +153,12 @@ where I: Input<Token = TokenWithLocation>
 fn unary_op<I>(mut input: I) -> ParseResult<(UnaryOperator, u8), I> 
 where I: Input<Token = TokenWithLocation>
 {   
-    let op = match input.next() {
-        Some(TokenWithLocation {token: Token::Keyword(Keyword::Not), location: _}) =>  (UnaryOperator::Not, 5),
-        Some(TokenWithLocation {token: Token::Punct(Punct::Plus), location: _}) =>  (UnaryOperator::Plus, 23),
-        Some(TokenWithLocation {token: Token::Punct(Punct::Minus), location: _}) =>  (UnaryOperator::Minus, 23),
-        Some(TokenWithLocation {token: Token::Punct(Punct::Tilde), location: _}) =>  (UnaryOperator::BitwiseNot, 23),
-        Some(TokenWithLocation {token:_, location:_}) => return Err(ParseError("invalid unary op".into())),
-        None => return Err(ParseError("end of input".into()))
-    };
-
-    Ok((op, input))
+    Keyword::Not.map(|_| (UnaryOperator::Not, 5))
+        .or(Punct::Plus.map(|_| (UnaryOperator::Plus, 23)))
+        .or(Punct::Minus.map(|_| (UnaryOperator::Minus, 23)))
+        .or(Punct::Tilde.map(|_| (UnaryOperator::BitwiseNot, 23)))
+        .parse(input)
 }
-
 
 fn expr_tuple<I>(input: I) -> ParseResult<Expr, I>
 where I: Input<Token = TokenWithLocation>
@@ -147,18 +180,17 @@ where I: Input<Token = TokenWithLocation>
 {
     let (operand, i) = Keyword::Case.andr(opt(expr(0).map(Box::new))).parse(input)?;
     
-    let (when, i) = many1(
+    let (when_then, i) = many1(
         Keyword::When
             .andr(expr(0))
             .and(Keyword::Then.andr(expr(0)))
-            .map(|(condition, result)| WhenCause { condition, result })
     )
     .parse(i)?;
 
     let (r#else, i) = opt(Keyword::Else.andr(expr(0).map(Box::new))).parse(i)?;
     
     let (_, i) = Keyword::End.parse(i)?;
-    Ok((Expr::Case { operand, when, r#else}, i))
+    Ok((Expr::Case { operand, when_then, r#else}, i))
 }
 
 fn expr_column<I>(input: I) -> ParseResult<Expr, I> 
@@ -232,7 +264,7 @@ where I: Input<Token = TokenWithLocation>
 {
     move |input: I| {
 
-        let (mut lhs, mut input) = literal.map(Expr::Literal)
+        let (mut left, mut input) = literal.map(Expr::Literal)
             .or(expr_unary)
             .or(expr_tuple)
             .or(expr_case)
@@ -248,12 +280,12 @@ where I: Input<Token = TokenWithLocation>
 
                 if l < min { break }
 
-                let (r_expr, i) = expr(r).parse(i)?;
+                let (right, i) = expr(r).parse(i)?;
 
-                lhs = Expr::BinaryOp { 
-                    left: Box::new(lhs), 
+                left = Expr::BinaryOp { 
+                    left: Box::new(left), 
                     op, 
-                    right: Box::new(r_expr)
+                    right: Box::new(right)
                 };
                 input = i;
                 continue;
@@ -269,76 +301,29 @@ where I: Input<Token = TokenWithLocation>
                     .andr(Keyword::From)
                     .parse(i.clone()) 
                 {                       
-                    let (r_expr, i) = expr(8).parse(i)?;
+                    let (right, i) = expr(8).parse(i)?;
 
-                    lhs = Expr::IsDistinctFrom { 
+                    left = Expr::IsDistinctFrom { 
                         not, 
-                        left: Box::new(lhs), 
-                        right: Box::new(r_expr) 
+                        left: Box::new(left), 
+                        right: Box::new(right) 
                     };
                     input = i;
                     continue;
                 }
 
-                let (r_expr, i) = expr(8).parse(i)?;
+                let (_, i) = Keyword::Null.parse(i)?;
 
-                lhs = Expr::Is { 
+                left = Expr::IsNull { 
                     not, 
-                    left: Box::new(lhs), 
-                    right: Box::new(r_expr) 
+                    expr: Box::new(left), 
                 }; 
                 input = i;
                 continue;
             }
 
-
-            if let Ok((_, i)) = Keyword::Collate.parse(input.clone()) {
-                if 21 < min { break }
-
-                let (collation, i) = ident.parse(i)?;
-
-                lhs = Expr::Collate { 
-                    expr: Box::new(lhs), 
-                    collation 
-                };
-
-                input = i;
-                continue;
-            }
-
-            if let Ok((_, i)) = Keyword::IsNull.parse(input.clone()) {
-                if 7 < min { break; }
-                lhs = Expr::IsNull {
-                    not: false,
-                    expr: Box::new(lhs)
-                };
-                input = i;
-                continue;
-            }
-
-            if let Ok((_, i)) = Keyword::NotNull.parse(input.clone()) {
-                if 7 < min { break; }
-                lhs = Expr::IsNull {
-                    not: true,
-                    expr: Box::new(lhs)
-                };
-                input = i;
-                continue;
-            }
-
-
             let (not, i) =  opt(Keyword::Not).map(|x| x.is_some()).parse(input)?;
             input = i;
-
-            if let Ok((_, i)) = Keyword::Null.parse(input.clone()) {
-                if 7 < min { break; }
-                lhs = Expr::IsNull {
-                    not,
-                    expr: Box::new(lhs)
-                };
-                input = i;
-                continue;
-            }
 
             if let Ok((_, i)) = Keyword::Like.parse(input.clone()) {
                 if 8 < min { break; }
@@ -349,9 +334,9 @@ where I: Input<Token = TokenWithLocation>
                     .map(|o| o.map(Box::new))
                     .parse(i)?;
 
-                lhs = Expr::Like { 
+                left = Expr::Like { 
                     not, 
-                    expr: Box::new(lhs), 
+                    expr: Box::new(left), 
                     pattern: Box::new(pattern), 
                     escape
                 };
@@ -365,19 +350,19 @@ where I: Input<Token = TokenWithLocation>
 
                 unsafe { PARSE_BETWEEN_EXPR = true }
 
-                let (lexpr, i) = expr(7).parse(i)?;
+                let (begin, i) = expr(7).parse(i)?;
 
                 let (_, i) = Keyword::And.parse(i)?;
 
-                let (rexpr, i) = expr(0).parse(i)?;
+                let (end, i) = expr(0).parse(i)?;
 
                 unsafe { PARSE_BETWEEN_EXPR = false }
 
-                lhs = Expr::Between { 
+                left = Expr::Between { 
                     not, 
-                    expr: Box::new(lhs), 
-                    left: Box::new(lexpr), 
-                    right: Box::new(rexpr)
+                    expr: Box::new(left), 
+                    begin: Box::new(begin), 
+                    end: Box::new(end)
                 };
                 input = i;
                 continue;
@@ -387,19 +372,19 @@ where I: Input<Token = TokenWithLocation>
                 let (_, i) = Punct::LParen.parse(i)?;
 
                 match select.parse(i.clone()) {
-                    Ok((select, i)) => {
-                        lhs = Expr::InSubquery { 
+                    Ok((query, i)) => {
+                        left = Expr::InSubquery { 
                             not, 
-                            expr: Box::new(lhs), 
-                            subquery: Box::new(select)
+                            expr: Box::new(left), 
+                            subquery: Box::new(query)
                         };
                         input = i;
                     }
                     Err(_) => {
                         let (list, i) = sepby(expr(0), Punct::Comma).parse(i)?;
-                        lhs = Expr::InList { 
+                        left = Expr::InList { 
                             not, 
-                            expr: Box::new(lhs), 
+                            expr: Box::new(left), 
                             list
                         };
                         input = i;
@@ -414,14 +399,14 @@ where I: Input<Token = TokenWithLocation>
             break;
         }
 
-        Ok((lhs, input))
+        Ok((left, input))
     }
 }
 
 pub fn select<I>(input: I) -> ParseResult<Query, I> 
 where I: Input<Token = TokenWithLocation>
 {
-    let (body, i) = core(0).parse(input)?;
+    let (body, i) = query_core(0).parse(input)?;
     let (order_by, i) = opt(order_by).parse(i)?;
     let (limit, i) = opt(limit).parse(i)?;
 
@@ -451,7 +436,7 @@ where I: Input<Token = TokenWithLocation>
         
 }
 
-fn core<I>(min: u8) -> impl Parser<I, Output = Select, Error = ParseError> 
+fn query_core<I>(min: u8) -> impl Parser<I, Output = QueryCore, Error = ParseError> 
 where I: Input<Token = TokenWithLocation>
 {
     move |input: I| {
@@ -463,7 +448,7 @@ where I: Input<Token = TokenWithLocation>
             .parse(i)?;
 
 
-        let (result, i) = sepby1(result_item, Punct::Comma).parse(i)?;
+        let (result, i) = sepby1(select_item, Punct::Comma).parse(i)?;
 
         let (from, i) = opt(Keyword::From.andr(from_item(0))).parse(i)?;
 
@@ -473,7 +458,7 @@ where I: Input<Token = TokenWithLocation>
 
         let (having, mut input) = opt(Keyword::Having.andr(expr(0))).parse(i)?;
 
-        let mut left = Select::Select { 
+        let mut left = QueryCore::Select { 
             distinct, 
             result, 
             from, 
@@ -485,8 +470,8 @@ where I: Input<Token = TokenWithLocation>
         loop {
             if let Ok((op, i)) = set_op.parse(input.clone()) {
                 if 1 < min { break; }
-                let (right, i) = core(2).parse(i)?;
-                left = Select::Compound { 
+                let (right, i) = query_core(2).parse(i)?;
+                left = QueryCore::Compound { 
                     op, 
                     left: Box::new(left), 
                     right: Box::new(right)
@@ -576,14 +561,14 @@ where I: Input<Token = TokenWithLocation>
         .parse(input)
 }
 
-fn result_item<I>(input: I) -> ParseResult<ResultItem, I> 
+fn select_item<I>(input: I) -> ParseResult<SelectItem, I> 
 where I: Input<Token = TokenWithLocation>
 {
     expr(0)
         .and(opt(opt(Keyword::As).andr(ident)))
-        .map(|(expr, alias)| ResultItem::Expr { expr, alias })
-        .or(Punct::Star.map(|_| ResultItem::Wildcard))
-        .or(ident.andl(Punct::Period).andl(Punct::Star).map(ResultItem::TableWildcard))
+        .map(|(expr, alias)| SelectItem::Expr { expr, alias })
+        .or(Punct::Star.map(|_| SelectItem::Wildcard))
+        .or(ident.andl(Punct::Period).andl(Punct::Star).map(SelectItem::TableWildcard))
         .parse(input)
 }
 
@@ -592,44 +577,4 @@ fn test() {
     let tokens = tokenize("2 in (select 2 and 3 as f)").unwrap();
     println!("{:#?}", expr(0).parse(tokens.as_slice()));
     // println!("{:#?}", tokens)
-}
-
-
-fn data_type<I>(mut input: I) -> ParseResult<DataType, I> 
-where I: Input<Token = TokenWithLocation>
-{
-    match input.next() {
-        Some(TokenWithLocation {token: Token::Ident(Ident {value, quote: None}), location}) => {
-            match value.to_uppercase().as_str() {
-                "INT" | "INTEGER" => Ok((DataType::Integer, input)),
-                "FLOAT" => Ok((DataType::Float, input)),
-                "BOOL" | "BOOLEAN" => Ok((DataType::Boolean, input)),
-                "STRING" => Ok((DataType::String, input)),
-                _ => return Err(ParseError(format!("{}, {}", location.line(), location.column()))),
-            }   
-        } 
-        Some(TokenWithLocation { token, location }) => Err(ParseError(format!("{}, {}", location.line(), location.column()))),
-        None => return Err(ParseError("end of input".into()))
-    }
-}
-
-
-fn literal<I>(mut input: I) -> ParseResult<Literal, I>
-where I: Input<Token = TokenWithLocation>
-{
-    match input.next() {
-        Some(TokenWithLocation {token: Token::Literal(literal), location: _ }) => Ok((literal, input)),
-        Some(TokenWithLocation { token, location }) => Err(ParseError(format!("{}, {}", location.line(), location.column()))),
-        _ => Err(ParseError("end of input".into()))
-    }
-}
-
-fn ident<I>(mut input: I) -> ParseResult<Ident, I>
-where I: Input<Token = TokenWithLocation>
-{
-    match input.next() {
-        Some(TokenWithLocation {token: Token::Ident(ident), location: _ }) => Ok((ident, input)),
-        Some(TokenWithLocation { token, location }) => Err(ParseError(format!("{}, {}", location.line(), location.column()))),
-        _ => Err(ParseError("end of input".into()))
-    }
 }

@@ -5,7 +5,7 @@ use super::token::{
 
 use super::data_type::DataType;
 
-use super::dml::Query;
+use super::query::Query;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BinaryOperator {
@@ -38,13 +38,6 @@ pub enum UnaryOperator {
 }
 
 #[derive(Debug, Clone)]
-pub struct WhenCause {
-    pub condition: Expr,
-    pub result: Expr
-}
-
-
-#[derive(Debug, Clone)]
 pub enum Expr {
     Literal(Literal),
     BinaryOp {
@@ -59,14 +52,10 @@ pub enum Expr {
     Between {
         not: bool,
         expr: Box<Expr>,
-        left: Box<Expr>,
-        right: Box<Expr>
+        begin: Box<Expr>,
+        end: Box<Expr>
     },
     Tuple(Vec<Expr>),
-    IsNull {
-        not: bool,
-        expr: Box<Expr>
-    },
     IsDistinctFrom {
         not: bool,
         left: Box<Expr>,
@@ -74,7 +63,7 @@ pub enum Expr {
     },
     Case {
         operand: Option<Box<Expr>>,
-        when: Vec<WhenCause>,
+        when_then: Vec<(Expr, Expr)>,
         r#else: Option<Box<Expr>>,
     },
     InList {
@@ -96,14 +85,9 @@ pub enum Expr {
         table: Option<Ident>,
         column: Ident
     },
-    Collate {
-        expr: Box<Expr>,
-        collation: Ident
-    },
-    Is {
+    IsNull {
         not: bool,
-        left: Box<Expr>,
-        right: Box<Expr>
+        expr: Box<Expr>,
     },
     Like {
         not: bool,

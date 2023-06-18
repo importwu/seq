@@ -1,10 +1,5 @@
-use std::collections::HashMap;
-
-use lazy_static::lazy_static;
-
-#[derive(Debug, PartialEq, Eq, Copy, Clone)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Punct {
-    Colon,               // :
     Comma,               // ,
     Tilde,               // ~
     Plus,                // +
@@ -84,7 +79,6 @@ pub enum Keyword {
     In,
 }
 
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Literal {
     Number(String),
@@ -99,7 +93,6 @@ pub struct Ident {
     pub quote: Option<char>
 }
 
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Token {
     Keyword(Keyword),
@@ -109,14 +102,7 @@ pub enum Token {
     Space,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TokenWithLocation {
-    pub token: Token,
-    pub location: Location,
-}
-
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Location {
     line: u64,
     column: u64,
@@ -148,57 +134,18 @@ impl Location {
     }
 }
 
-lazy_static! {
-    pub static ref KEYWORDS: HashMap<&'static str, Keyword> = {
-        let mut keywords = HashMap::new();
-        keywords.insert("SELECT", Keyword::Select);
-        keywords.insert("NATURAL", Keyword::Natural);
-        keywords.insert("LEFT", Keyword::Left);
-        keywords.insert("RIGHT", Keyword::Right);
-        keywords.insert("FULL", Keyword::Full);
-        keywords.insert("INNER", Keyword::Inner);
-        keywords.insert("CROSS", Keyword::Cross);
-        keywords.insert("OUTER", Keyword::Outer);
-        keywords.insert("JOIN", Keyword::Join);
-        keywords.insert("ON", Keyword::On);
-        keywords.insert("USING", Keyword::Using);
-        keywords.insert("AS", Keyword::As);
-        keywords.insert("DISTINCT", Keyword::Distinct);
-        keywords.insert("ALL", Keyword::All);
-        keywords.insert("FROM", Keyword::From);
-        keywords.insert("WHERE", Keyword::Where);
-        keywords.insert("GROUP", Keyword::Group);
-        keywords.insert("BY", Keyword::By);
-        keywords.insert("HAVING", Keyword::Having);
-        keywords.insert("ORDER", Keyword::Order);
-        keywords.insert("LIMIT", Keyword::Limit);
-        keywords.insert("CASE", Keyword::Case);
-        keywords.insert("WHEN", Keyword::When);
-        keywords.insert("THEN", Keyword::Then);
-        keywords.insert("ELSE", Keyword::Else);
-        keywords.insert("END", Keyword::End);
-        keywords.insert("AND", Keyword::And);
-        keywords.insert("OR", Keyword::Or);
-        keywords.insert("NOT", Keyword::Not);
-        keywords.insert("CAST", Keyword::Not);
-        keywords.insert("IS", Keyword::Is);
-        keywords.insert("BETWEEN", Keyword::Between);
-        keywords.insert("LIKE", Keyword::Like);
-        keywords.insert("ESCAPE", Keyword::Escape);
-        keywords.insert("ISNULL", Keyword::IsNull);
-        keywords.insert("NOTNULL", Keyword::NotNull);
-        keywords.insert("NULL", Keyword::Null);
-        keywords.insert("COLLATE", Keyword::Collate);
-        keywords.insert("FILTER", Keyword::Filter);
-        keywords.insert("UNION", Keyword::Union);
-        keywords.insert("Intersect", Keyword::Intersect);
-        keywords.insert("EXCEPT", Keyword::Except);
-        keywords.insert("EXISTS", Keyword::Exists);
-        keywords.insert("OFFSET", Keyword::Offset);
-        keywords.insert("IN", Keyword::In);
-        keywords
-    };
+#[derive(Debug, Clone, Eq)]
+pub struct TokenWithLocation {
+    pub token: Token,
+    pub location: Location,
 }
+
+impl PartialEq for TokenWithLocation {
+    fn eq(&self, other: &Self) -> bool {
+        self.token.eq(&other.token)
+    }
+}
+
 // impl fmt::Display for Keyword {
 //     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
 //         match self {
