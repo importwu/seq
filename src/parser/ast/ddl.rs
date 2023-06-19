@@ -1,6 +1,7 @@
-use super::token::Ident;
+use super::Ident;
 use super::query::Query;
-use data_type::DataType;
+use super::DataType;
+use super::expr::Expr;
 
 pub struct CreateTable {
     pub temporary: bool,

@@ -1,16 +1,11 @@
 use super::expr::Expr;
-use super::token::Ident;
+use super::Ident;
 
 #[derive(Debug, Clone)]
 pub struct Query {
     pub body: QueryCore,
     pub order_by: Vec<OrderItem>,
-    pub limit: Option<Limit>
-}
-
-#[derive(Debug, Clone)]
-pub struct Limit {
-    pub start: Expr,
+    pub limit: Option<Expr>,
     pub offset: Option<Expr>
 }
 

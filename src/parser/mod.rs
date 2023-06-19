@@ -1,10 +1,6 @@
 mod tokenizer;
-mod expr;
-mod ddl;
-mod dml;
 mod token;
-mod data_type;
-mod query;
+mod ast;
 
 use rtor::{
     Parser,
@@ -15,25 +11,22 @@ use token::{
     TokenWithLocation,
     Token,
     Keyword,
-    Ident,
     Punct,
-    Literal
 };
 
-use expr::{
+use ast::expr::{
     Expr,
     BinaryOperator,
     UnaryOperator,
     Function,
     FunctionArg,
-    WhenCause
+    // WhenCause
 };
 
-use query::{
+use ast::query::{
     OrderItem,
     SetOperator,
     QueryCore,
-    Limit,
     Query,
     FromItem,
     SelectItem,
@@ -42,9 +35,11 @@ use query::{
     Table
 };
 
+use ast::Ident;
+use ast::Literal;
 use tokenizer::tokenize;
 
-use data_type::DataType;
+use ast::DataType;
 
 
 #[derive(Debug)]
@@ -56,19 +51,11 @@ type ParseResult<T, I> = Result<(T, I), ParseError>;
 fn data_type<I>(mut input: I) -> ParseResult<DataType, I> 
 where I: Input<Token = TokenWithLocation>
 {
-    match input.next() {
-        Some(TokenWithLocation {token: Token::Ident(Ident {value, quote: None}), location}) => {
-            match value.to_uppercase().as_str() {
-                "INT" | "INTEGER" => Ok((DataType::Integer, input)),
-                "FLOAT" => Ok((DataType::Float, input)),
-                "BOOL" | "BOOLEAN" => Ok((DataType::Boolean, input)),
-                "STRING" => Ok((DataType::String, input)),
-                _ => return Err(ParseError(format!("{}, {}", location.line(), location.column()))),
-            }   
-        } 
-        Some(TokenWithLocation { token, location }) => Err(ParseError(format!("{}, {}", location.line(), location.column()))),
-        None => return Err(ParseError("end of input".into()))
-    }
+    Keyword::Int.or(Keyword::Integer).map(|_| DataType::Integer)
+        .or(Keyword::Float.map(|_| DataType::Float))
+        .or(Keyword::String.map(|_| DataType::String))
+        .or(Keyword::Bool.or(Keyword::Boolean).map(|_| DataType::Boolean))
+        .parse(input)
 }
 
 
@@ -76,8 +63,14 @@ fn literal<I>(mut input: I) -> ParseResult<Literal, I>
 where I: Input<Token = TokenWithLocation>
 {
     match input.next() {
-        Some(TokenWithLocation { token: Token::Literal(literal), location: _ }) => Ok((literal, input)),
-        Some(TokenWithLocation { token, location }) => Err(ParseError(format!("{}, {}", location.line(), location.column()))),
+        Some(TokenWithLocation { token, location }) => match token {
+            Token::Number(s) => Ok((Literal::Number(s), input)),
+            Token::String(s) => Ok((Literal::String(s), input)),
+            Token::Keyword(Keyword::Null) => Ok((Literal::Null, input)),
+            Token::Keyword(Keyword::True) => Ok((Literal::Boolean(true), input)),
+            Token::Keyword(Keyword::False) => Ok((Literal::Boolean(false), input)),
+            _ => Err(ParseError(format!("{}, {}", location.line(), location.column())))
+        }
         _ => Err(ParseError("end of input".into()))
     }
 }
@@ -86,7 +79,7 @@ fn ident<I>(mut input: I) -> ParseResult<Ident, I>
 where I: Input<Token = TokenWithLocation>
 {
     match input.next() {
-        Some(TokenWithLocation { token: Token::Ident(ident), location: _ }) => Ok((ident, input)),
+        Some(TokenWithLocation { token: Token::Ident { value, quote }, location: _ }) => Ok((Ident { value, quote }, input)),
         Some(TokenWithLocation { token, location }) => Err(ParseError(format!("{}, {}", location.line(), location.column()))),
         _ => Err(ParseError("end of input".into()))
     }
@@ -408,9 +401,10 @@ where I: Input<Token = TokenWithLocation>
 {
     let (body, i) = query_core(0).parse(input)?;
     let (order_by, i) = opt(order_by).parse(i)?;
-    let (limit, i) = opt(limit).parse(i)?;
+    let (limit, i) = opt(Keyword::Limit.andr(expr(0))).parse(i)?;
+    let (offset, i) = opt(Keyword::Offset.andr(expr(0))).parse(i)?;
 
-    Ok((Query {body, order_by: order_by.unwrap_or(vec![]), limit }, i))
+    Ok((Query {body, order_by: order_by.unwrap_or(vec![]), limit, offset }, i))
 }
 
 fn order_by<I>(input: I) -> ParseResult<Vec<OrderItem>, I> 
@@ -424,16 +418,6 @@ where I: Input<Token = TokenWithLocation>
     Keyword::Order.andr(Keyword::By)
         .andr(sepby1(order_item, Punct::Comma))
         .parse(input)
-}
-
-fn limit<I>(input: I) -> ParseResult<Limit, I> 
-where I: Input<Token = TokenWithLocation>
-{
-    Keyword::Limit.andr(expr(0))
-        .and(opt(Keyword::Offset.or(Punct::Comma).andr(expr(0))))
-        .map(|(start, offset)| Limit { start, offset })
-        .parse(input)
-        
 }
 
 fn query_core<I>(min: u8) -> impl Parser<I, Output = QueryCore, Error = ParseError> 

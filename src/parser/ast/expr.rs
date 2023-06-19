@@ -1,11 +1,10 @@
-use super::token::{
-    Literal,
-    Ident
-};
+use super::Ident;
 
-use super::data_type::DataType;
+use super::DataType;
 
 use super::query::Query;
+
+use super::Literal;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BinaryOperator {

@@ -1,6 +1,4 @@
-use std::collections::HashMap;
-
-use lazy_static::lazy_static;
+use std::str::FromStr;
 
 use rtor::{
     Input,
@@ -18,8 +16,6 @@ use rtor::{
         skip_many1,
         opt,
         recognize,
-        token, 
-        peek, 
         not
     },
     Parser, 
@@ -29,8 +25,6 @@ use rtor::{
 use super::token::{
     Punct,
     Keyword,
-    Ident,
-    Literal,
     Token,
     Location,
     TokenWithLocation,
@@ -38,58 +32,6 @@ use super::token::{
 
 #[derive(Debug)]
 pub struct TokenizeError(String);
-
-lazy_static! {
-    pub static ref KEYWORDS: HashMap<&'static str, Keyword> = {
-        let mut keywords = HashMap::new();
-        keywords.insert("SELECT", Keyword::Select);
-        keywords.insert("NATURAL", Keyword::Natural);
-        keywords.insert("LEFT", Keyword::Left);
-        keywords.insert("RIGHT", Keyword::Right);
-        keywords.insert("FULL", Keyword::Full);
-        keywords.insert("INNER", Keyword::Inner);
-        keywords.insert("CROSS", Keyword::Cross);
-        keywords.insert("OUTER", Keyword::Outer);
-        keywords.insert("JOIN", Keyword::Join);
-        keywords.insert("ON", Keyword::On);
-        keywords.insert("USING", Keyword::Using);
-        keywords.insert("AS", Keyword::As);
-        keywords.insert("DISTINCT", Keyword::Distinct);
-        keywords.insert("ALL", Keyword::All);
-        keywords.insert("FROM", Keyword::From);
-        keywords.insert("WHERE", Keyword::Where);
-        keywords.insert("GROUP", Keyword::Group);
-        keywords.insert("BY", Keyword::By);
-        keywords.insert("HAVING", Keyword::Having);
-        keywords.insert("ORDER", Keyword::Order);
-        keywords.insert("LIMIT", Keyword::Limit);
-        keywords.insert("CASE", Keyword::Case);
-        keywords.insert("WHEN", Keyword::When);
-        keywords.insert("THEN", Keyword::Then);
-        keywords.insert("ELSE", Keyword::Else);
-        keywords.insert("END", Keyword::End);
-        keywords.insert("AND", Keyword::And);
-        keywords.insert("OR", Keyword::Or);
-        keywords.insert("NOT", Keyword::Not);
-        keywords.insert("CAST", Keyword::Not);
-        keywords.insert("IS", Keyword::Is);
-        keywords.insert("BETWEEN", Keyword::Between);
-        keywords.insert("LIKE", Keyword::Like);
-        keywords.insert("ESCAPE", Keyword::Escape);
-        keywords.insert("ISNULL", Keyword::IsNull);
-        keywords.insert("NOTNULL", Keyword::NotNull);
-        keywords.insert("NULL", Keyword::Null);
-        keywords.insert("COLLATE", Keyword::Collate);
-        keywords.insert("FILTER", Keyword::Filter);
-        keywords.insert("UNION", Keyword::Union);
-        keywords.insert("Intersect", Keyword::Intersect);
-        keywords.insert("EXCEPT", Keyword::Except);
-        keywords.insert("EXISTS", Keyword::Exists);
-        keywords.insert("OFFSET", Keyword::Offset);
-        keywords.insert("IN", Keyword::In);
-        keywords
-    };
-}
 
 #[derive(Debug, Clone)]
 struct LocatedInput<I> {
@@ -226,17 +168,21 @@ where I: Input<Token = char>
                 .map(|_| Some(Token::Space))
                 .or(pure(Some(Token::Punct(Punct::Slash))))
                 .parse(input)
-
         }
         Some('.' | '0'..='9') => {
+            let fraction = '.'.andr(skip_many(digit));
+            let fraction1 = '.'.andr(skip_many1(digit));
+            let exponent = 'E'.or('e').andr(opt('+'.or('-'))).andr(skip_many1(digit));
+            let number = recognize(skip_many1(digit).andl(opt(fraction)).or(fraction1).andl(opt(exponent)))
+                .map(|i: I| Some(Token::Number(i.tokens().collect())));
             '.'.andr(not(digit)).map(|_| Some(Token::Punct(Punct::Period)))
-                .or(number.andl(peek(not(unicode::alpha).or(eof))))
+                .or(number.andl(not(unicode::alpha)))
                 .parse(input)
         }
         Some('\'') => {
             input.next();
             recognize(skip_many(not('\'').andr(anychar))).andl('\'')
-                .map(|i: I| Some(Token::Literal(Literal::String(i.tokens().collect()))))
+                .map(|i: I| Some(Token::String(i.tokens().collect())))
                 .parse(input)
         }
         Some(start_quote@('`' | '[' | '"')) => {
@@ -248,63 +194,31 @@ where I: Input<Token = char>
                 _ => unreachable!() 
             };
 
-            let ident = recognize(skip_many(not((end_quote)).andr(anychar)))
-                .map(|i: I| i.tokens().collect::<String>().trim().to_owned());
-
-            ident
-                .andl(end_quote)
+            recognize(skip_many(not((end_quote)).andr(anychar))).andl(end_quote)
                 .map_err(|_| ParseError::Message("quote word".into()))
-                .map(|value| Some(Token::Ident(Ident { value, quote: Some(start_quote) })))
+                .map(|i: I| Some(Token::Ident{ 
+                    value: i.tokens().collect::<String>().trim().to_owned(), 
+                    quote: Some(start_quote) 
+                }))
                 .parse(input)
         },
         Some(_) => {
-            let (word, i) = word.parse(input)?;
-            let word_uppercase = word.to_uppercase();
-            match word_uppercase.as_str() {
-                "FALSE" => Ok((Some(Token::Literal(Literal::Boolean(false))), i)),
-                "TRUE" => Ok((Some(Token::Literal(Literal::Boolean(true))), i)),
-                "NULL" => Ok((Some(Token::Literal(Literal::Null)), i)),
-                _ => match KEYWORDS.get(word_uppercase.as_str()) 
-                {
-                    Some(&keyword) => Ok((Some(Token::Keyword(keyword)), i)),
-                    _ => Ok((Some(Token::Ident(Ident { value: word, quote: None })), i))
-                }
-            }
+            recognize(unicode::alpha.or('_').andr(skip_many(unicode::alpha.or('_').or('$').or(digit))))
+            .map(|i: I| {
+                let word = i.tokens().collect::<String>();
+                Some(Keyword::from_str(&word)
+                    .map(Token::Keyword)
+                    .unwrap_or(Token::Ident { value: word, quote: None }))
+            })
+            .parse(input)
         },
         None => return Ok((None, input))
     }
 }
 
-fn number<I>(input: I) -> ParseResult<Option<Token>, I> 
-where I: Input<Token = char>
-{
-    let fraction = '.'.andr(skip_many(digit));
-    let fraction1 = '.'.andr(skip_many1(digit));
-    let exponent = 'E'.or('e')
-        .andr(opt('+'.or('-')))
-        .andr(skip_many1(digit));
-    let number = skip_many1(digit)
-        .andl(opt(fraction))
-        .or(fraction1)
-        .andl(opt(exponent));
-    recognize(number).map(|i: I| Some(Token::Literal(Literal::Number(i.tokens().collect())))).parse(input)
-}
-
-fn word<I>(input: I) -> ParseResult<String, I> 
-where I: Input<Token = char>
-{
-    recognize(
-        unicode::alpha
-        .or('_')
-        .andr(skip_many(unicode::alpha.or('_').or('$').or(digit)))
-    )
-    .map(|i: I| i.tokens().collect())
-    .parse(input)
-}
-
 #[test]
 fn test() {
-    let xs = tokenize("[ 1 2 ");
+    let xs = tokenize("[ d da ");
     println!("{:?}", xs)
 
 }
